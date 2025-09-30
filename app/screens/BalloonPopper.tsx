@@ -1,5 +1,10 @@
-// app/balloonpopper.tsx
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Dimensions,
   GestureResponderEvent,
@@ -10,7 +15,7 @@ import {
   View,
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
-import { LinearGradient } from "expo-linear-gradient"; // 👈 added
+import { LinearGradient } from "expo-linear-gradient";
 
 import {
   balloonImages,
@@ -18,7 +23,11 @@ import {
   popSounds,
   slashSounds,
   type BalloonColor,
-} from "../assets";
+} from "../../assets"; // ✅ corrected path
+
+import { rand, pick } from "../../utils/random"; // ✅ corrected path
+import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import { RootStackParamList } from "../_layout"; // ✅ corrected path
 
 // -------------------- Types --------------------
 type Balloon = {
@@ -40,15 +49,15 @@ type Cloud = {
   speed: number;
 };
 
+type BalloonProps = NativeStackScreenProps<RootStackParamList, "BalloonPopper">;
+
 // -------------------- Helpers --------------------
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-
-const rand = (min: number, max: number) => Math.random() * (max - min) + min;
-const pick = <T,>(arr: T[]) => arr[(Math.random() * arr.length) | 0];
-const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const makeId = () =>
+  `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 // -------------------- Component --------------------
-export default function BalloonPopper() {
+export default function BalloonPopper({ navigation, route }: BalloonProps) {
   const [balloons, setBalloons] = useState<Balloon[]>([]);
   const [clouds, setClouds] = useState<Cloud[]>([]);
   const [score, setScore] = useState<number>(0);
@@ -82,26 +91,30 @@ export default function BalloonPopper() {
       });
 
       const pops = await Promise.all(
-        popSounds.map((src) => Audio.Sound.createAsync(src, { shouldPlay: false }))
+        popSounds.map((src: any) =>
+          Audio.Sound.createAsync(src, { shouldPlay: false })
+        )
       );
       const slashes = await Promise.all(
-        slashSounds.map((src) => Audio.Sound.createAsync(src, { shouldPlay: false }))
+        slashSounds.map((src: any) =>
+          Audio.Sound.createAsync(src, { shouldPlay: false })
+        )
       );
 
       if (!mounted) {
-        pops.forEach((r) => r.sound.unloadAsync());
-        slashes.forEach((r) => r.sound.unloadAsync());
+        pops.forEach((r: any) => r.sound.unloadAsync());
+        slashes.forEach((r: any) => r.sound.unloadAsync());
         return;
       }
 
-      popSoundObjs.current = pops.map((r) => r.sound);
-      slashSoundObjs.current = slashes.map((r) => r.sound);
+      popSoundObjs.current = pops.map((r: any) => r.sound);
+      slashSoundObjs.current = slashes.map((r: any) => r.sound);
     })();
 
     return () => {
       mounted = false;
-      popSoundObjs.current.forEach((s) => s.unloadAsync());
-      slashSoundObjs.current.forEach((s) => s.unloadAsync());
+      popSoundObjs.current.forEach((s: any) => s.unloadAsync());
+      slashSoundObjs.current.forEach((s: any) => s.unloadAsync());
     };
   }, []);
 
@@ -128,8 +141,18 @@ export default function BalloonPopper() {
     const y = SCREEN_H + half + 8;
     const speed = rand(1.2, 2.8);
 
-    const b: Balloon = { id: makeId(), color, x, y, size, speed, popped: false };
-    setBalloons((prev) => (prev.length > 60 ? [...prev.slice(10), b] : [...prev, b]));
+    const b: Balloon = {
+      id: makeId(),
+      color,
+      x,
+      y,
+      size,
+      speed,
+      popped: false,
+    };
+    setBalloons((prev) =>
+      prev.length > 60 ? [...prev.slice(10), b] : [...prev, b]
+    );
   }, [colors]);
 
   const spawnCloud = useCallback(() => {
@@ -137,7 +160,7 @@ export default function BalloonPopper() {
     const scale = rand(0.7, 1.8);
     const height = 80 * scale;
     const y = rand(20, SCREEN_H * 0.7 - height);
-    const speed = rand(0.3, 0.8) * (2.2 - scale); // 👈 slowed clouds
+    const speed = rand(0.3, 0.8) * (2.2 - scale);
 
     const c: Cloud = {
       id: makeId(),
@@ -147,7 +170,9 @@ export default function BalloonPopper() {
       scale,
       speed,
     };
-    setClouds((prev) => (prev.length > 12 ? [...prev.slice(2), c] : [...prev, c]));
+    setClouds((prev) =>
+      prev.length > 12 ? [...prev.slice(2), c] : [...prev, c]
+    );
   }, []);
 
   // ---------- RAF main loop ----------
@@ -159,14 +184,14 @@ export default function BalloonPopper() {
 
       setBalloons((prev) =>
         prev
-          .map((b) => ({ ...b, y: b.y - b.speed * (dt * 1.2) }))
-          .filter((b) => !b.popped && b.y + b.size / 2 >= -10)
+          .map((b: Balloon) => ({ ...b, y: b.y - b.speed * (dt * 1.2) }))
+          .filter((b: Balloon) => !b.popped && b.y + b.size / 2 >= -10)
       );
 
       setClouds((prev) =>
         prev
-          .map((c) => ({ ...c, x: c.x + c.speed * (dt * 1.2) }))
-          .filter((c) => c.x <= SCREEN_W + 240 * c.scale)
+          .map((c: Cloud) => ({ ...c, x: c.x + c.speed * (dt * 1.2) }))
+          .filter((c: Cloud) => c.x <= SCREEN_W + 240 * c.scale)
       );
 
       const now = performance.now();
@@ -220,20 +245,23 @@ export default function BalloonPopper() {
     <View style={styles.container}>
       {/* Gradient Sky */}
       <LinearGradient
-        colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]} // dark → medium → light
+        colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
         style={StyleSheet.absoluteFill}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
       />
 
       {/* Clouds */}
-      {clouds.map((c) => {
-        const src = cloudImages[c.imgIndex];
+      {clouds.map((c: Cloud) => {
+        const src: any = cloudImages[c.imgIndex];
         return (
           <Image
             key={c.id}
             source={src}
-            style={[styles.cloud, { left: c.x, top: c.y, transform: [{ scale: c.scale }] }]}
+            style={[
+              styles.cloud,
+              { left: c.x, top: c.y, transform: [{ scale: c.scale }] },
+            ]}
             resizeMode="contain"
           />
         );
@@ -241,15 +269,18 @@ export default function BalloonPopper() {
 
       {/* Playfield */}
       <Pressable style={StyleSheet.absoluteFill} onPress={handlePress}>
-        {balloons.map((b) => {
-          const src = balloonImages[b.color];
+        {balloons.map((b: Balloon) => {
+          const src: any = balloonImages[b.color];
           const left = b.x - b.size / 2;
           const top = b.y - b.size / 2;
           return (
             <Image
               key={b.id}
               source={src}
-              style={[styles.balloon, { width: b.size, height: b.size, left, top }]}
+              style={[
+                styles.balloon,
+                { width: b.size, height: b.size, left, top },
+              ]}
               resizeMode="contain"
               accessibilityRole="imagebutton"
               accessibilityLabel={`${b.color} balloon`}

@@ -1,19 +1,40 @@
-// app/_layout.tsx
-import React from "react";
-import { Stack } from "expo-router";
+import { NavigationContainer } from "@react-navigation/native";
+import { createNativeStackNavigator } from "@react-navigation/native-stack";
 
+// Screens
+import HomeScreen from "./index"; // Home stays at app/index.tsx
+import SpinnerScreen from "./screens/SpinnerScreen";
+import BalloonPopper from "./screens/BalloonPopper";
+
+// -------------------- Stack Param List --------------------
+export type RootStackParamList = {
+  Home: undefined;
+  Spinner: undefined;
+  BalloonPopper: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+// -------------------- Layout --------------------
 export default function Layout() {
   return (
-    <Stack
-      initialRouteName="index" // always land on Home (app/index.tsx)
-      screenOptions={{ headerShown: false }}
-    >
-      {/* Home Menu */}
-      <Stack.Screen name="index" />
+    <NavigationContainer>
+      <Stack.Navigator
+        initialRouteName="Home"
+        screenOptions={{ headerShown: false }}
+      >
+        <Stack.Screen name="Home" component={HomeScreen} />
 
-      {/* Game screens (headers visible inside) */}
-      <Stack.Screen name="spinner" options={{ title: "Fidget Spinner", headerShown: true }} />
-      <Stack.Screen name="balloonpopper" options={{ title: "Balloon Popper", headerShown: true }} />
-    </Stack>
+        {/* ✅ Casts prevent TS 2739 errors */}
+        <Stack.Screen
+          name="Spinner"
+          component={SpinnerScreen as React.ComponentType<any>}
+        />
+        <Stack.Screen
+          name="BalloonPopper"
+          component={BalloonPopper as React.ComponentType<any>}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
