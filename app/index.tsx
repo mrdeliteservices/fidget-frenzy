@@ -1,25 +1,25 @@
+// app/index.tsx
 import React from "react";
 import { View, Text, StyleSheet, Pressable } from "react-native";
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
-import { RootStackParamList } from "./_layout";
+import { useRouter } from "expo-router";
 
-type HomeProps = NativeStackScreenProps<RootStackParamList, "Home">;
+export default function HomeScreen() {
+  const router = useRouter();
 
-export default function HomeScreen({ navigation }: HomeProps) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>🎮 Fidget Frenzy</Text>
 
       <Pressable
         style={styles.button}
-        onPress={() => navigation.navigate("Spinner")}
+        onPress={() => router.push("/screens/SpinnerScreen")}
       >
         <Text style={styles.buttonText}>Play Spinner</Text>
       </Pressable>
 
       <Pressable
         style={styles.button}
-        onPress={() => navigation.navigate("BalloonPopper")}
+        onPress={() => router.push("/screens/BalloonPopper")}
       >
         <Text style={styles.buttonText}>Play Balloon Popper</Text>
       </Pressable>

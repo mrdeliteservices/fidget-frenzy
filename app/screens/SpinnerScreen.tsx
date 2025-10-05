@@ -1,23 +1,21 @@
-import { Audio } from "expo-av";
-import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useRef } from "react";
-import { StyleSheet, Text, View } from "react-native";
-import { Gesture, GestureDetector } from "react-native-gesture-handler";
+// app/screens/SpinnerScreen.tsx
+import { Audio } from 'expo-av';
+import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useEffect, useRef } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
   useFrameCallback,
   useSharedValue,
   FrameInfo,
-} from "react-native-reanimated";
+} from 'react-native-reanimated';
 
-import HomeButton from "../../components/HomeButton"; // ✅ adjusted path
-import { RootStackParamList } from "../_layout"; // ✅ navigation types
-import { NativeStackScreenProps } from "@react-navigation/native-stack";
+import HomeButton from '../../components/HomeButton';
 
-type SpinnerProps = NativeStackScreenProps<RootStackParamList, "Spinner">;
-
+// ---------- Config ----------
 const CONFIG = {
   HUB_DIAMETER: 70,
   WEIGHT_DIAMETER: 90,
@@ -32,7 +30,7 @@ const CONFIG = {
   HAPTIC_DEGREES: 90,
 };
 
-export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
+export default function SpinnerScreen() {
   const angle = useSharedValue(0);
   const omega = useSharedValue(0);
   const lastHapticAt = useSharedValue(0);
@@ -52,7 +50,7 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
   useEffect(() => {
     (async () => {
       const { sound: whoosh } = await Audio.Sound.createAsync(
-        require("../../assets/sounds/whoosh-sound-effect-240257.mp3"),
+        require('../../assets/sounds/whoosh-sound-effect-240257.mp3'),
         { isLooping: false, volume: 1.0 }
       );
       whooshRef.current = whoosh;
@@ -79,11 +77,11 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
   const playWhoosh = async () => {
     if (!whooshRef.current || whooshPlaying.current) return;
     const st = await whooshRef.current.getStatusAsync();
-    if ("isPlaying" in st && st.isPlaying) return;
+    if ('isPlaying' in st && st.isPlaying) return;
 
     whooshPlaying.current = true;
     whooshRef.current.setOnPlaybackStatusUpdate((s: any) => {
-      if ("didJustFinish" in s && s.didJustFinish) {
+      if ('didJustFinish' in s && s.didJustFinish) {
         whooshPlaying.current = false;
         whooshRef.current?.setPositionAsync(0).catch(() => {});
         whooshRef.current?.setOnPlaybackStatusUpdate(null);
@@ -104,7 +102,7 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
 
   // ---------- Frame Loop ----------
   useFrameCallback((frame: FrameInfo) => {
-    "worklet";
+    'worklet';
     const dt = frame.timeSincePreviousFrame ?? 0;
     if (dt <= 0) return;
 
@@ -174,11 +172,9 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
   }));
 
   const ArmGroup = ({ angle: armAngle }: { angle: string }) => (
-    <View
-      style={[styles.armGroup, { transform: [{ rotate: armAngle }] }]}
-    >
+    <View style={[styles.armGroup, { transform: [{ rotate: armAngle }] }]}>
       <LinearGradient
-        colors={["#444", "#aaa", "#444"]}
+        colors={['#444', '#aaa', '#444']}
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 1 }}
         style={[
@@ -199,7 +195,7 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
       </LinearGradient>
 
       <LinearGradient
-        colors={["#222", "#bbb", "#222"]}
+        colors={['#222', '#bbb', '#222']}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={[
@@ -213,7 +209,7 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
         ]}
       >
         <LinearGradient
-          colors={["#3b82f6", "#2563eb", "#1e40af"]}
+          colors={['#3b82f6', '#2563eb', '#1e40af']}
           start={{ x: 0.3, y: 0.3 }}
           end={{ x: 1, y: 1 }}
           style={[
@@ -240,9 +236,8 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
           onLayout={onBodyLayout}
           style={[styles.spinnerBody, animatedStyle]}
         >
-          {/* Hub */}
           <LinearGradient
-            colors={["#7c2d12", "#f59e0b", "#7c2d12"]}
+            colors={['#7c2d12', '#f59e0b', '#7c2d12']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
             style={[
@@ -251,13 +246,13 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
                 width: CONFIG.HUB_DIAMETER,
                 height: CONFIG.HUB_DIAMETER,
                 borderRadius: CONFIG.HUB_DIAMETER / 2,
-                justifyContent: "center",
-                alignItems: "center",
+                justifyContent: 'center',
+                alignItems: 'center',
               },
             ]}
           >
             <LinearGradient
-              colors={["#fbbf24", "#d97706", "#78350f"]}
+              colors={['#fbbf24', '#d97706', '#78350f']}
               start={{ x: 0.3, y: 0.3 }}
               end={{ x: 1, y: 1 }}
               style={{
@@ -268,71 +263,68 @@ export default function SpinnerScreen({ navigation, route }: SpinnerProps) {
             />
           </LinearGradient>
 
-          {/* Arms */}
           <ArmGroup angle="0deg" />
           <ArmGroup angle="120deg" />
           <ArmGroup angle="240deg" />
         </Animated.View>
       </GestureDetector>
 
-      {/* Back to menu */}
       <HomeButton />
     </View>
   );
 }
 
-// ---------- Styles ----------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#0b1220",
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#0b1220',
   },
   title: {
-    position: "absolute",
+    position: 'absolute',
     top: 50,
     fontSize: 22,
-    fontWeight: "700",
-    color: "white",
+    fontWeight: '700',
+    color: 'white',
   },
   spinnerBody: {
     width: 320,
     height: 320,
-    justifyContent: "center",
-    alignItems: "center",
-    position: "relative",
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
   },
   hub: {
     borderWidth: 3,
-    borderColor: "#111",
+    borderColor: '#111',
     zIndex: 3,
   },
   armGroup: {
-    position: "absolute",
-    width: "100%",
-    height: "100%",
-    alignItems: "center",
-    justifyContent: "center",
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   armBase: {
-    position: "absolute",
-    borderRadius: CONFIG.ARM_WIDTH / 2,
+    position: 'absolute',
+    borderRadius: 999,
   },
   pinch: {
-    position: "absolute",
+    position: 'absolute',
     height: 32,
     borderRadius: 999,
-    alignSelf: "center",
-    backgroundColor: "#0b1220",
+    alignSelf: 'center',
+    backgroundColor: '#0b1220',
   },
   weightRim: {
-    position: "absolute",
-    justifyContent: "center",
-    alignItems: "center",
+    position: 'absolute',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   weightCore: {
     borderWidth: 3,
-    borderColor: "#111",
+    borderColor: '#111',
   },
 });

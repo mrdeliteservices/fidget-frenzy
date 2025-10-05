@@ -1,40 +1,28 @@
-import { NavigationContainer } from "@react-navigation/native";
-import { createNativeStackNavigator } from "@react-navigation/native-stack";
+// app/_layout.tsx
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import { View, StyleSheet } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
-// Screens
-import HomeScreen from "./index"; // Home stays at app/index.tsx
-import SpinnerScreen from "./screens/SpinnerScreen";
-import BalloonPopper from "./screens/BalloonPopper";
-
-// -------------------- Stack Param List --------------------
-export type RootStackParamList = {
-  Home: undefined;
-  Spinner: undefined;
-  BalloonPopper: undefined;
-};
-
-const Stack = createNativeStackNavigator<RootStackParamList>();
-
-// -------------------- Layout --------------------
 export default function Layout() {
   return (
-    <NavigationContainer>
-      <Stack.Navigator
-        initialRouteName="Home"
-        screenOptions={{ headerShown: false }}
-      >
-        <Stack.Screen name="Home" component={HomeScreen} />
-
-        {/* ✅ Casts prevent TS 2739 errors */}
-        <Stack.Screen
-          name="Spinner"
-          component={SpinnerScreen as React.ComponentType<any>}
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <View style={styles.container}>
+        <StatusBar style="light" />
+        <Stack
+          screenOptions={{
+            headerShown: false,
+            contentStyle: { backgroundColor: "#0b1220" },
+          }}
         />
-        <Stack.Screen
-          name="BalloonPopper"
-          component={BalloonPopper as React.ComponentType<any>}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+      </View>
+    </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#0b1220",
+  },
+});

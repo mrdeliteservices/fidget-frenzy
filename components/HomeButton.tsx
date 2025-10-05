@@ -1,33 +1,28 @@
- import { Pressable, Text, StyleSheet } from "react-native";
+import React from "react";
+import { TouchableOpacity, Text, StyleSheet } from "react-native";
 import { useRouter } from "expo-router";
 
-type Props = {
-  title: string;
-  route: string;
-};
-
-export default function HomeButton({ title, route }: Props) {
+export default function HomeButton() {
   const router = useRouter();
 
   return (
-    <Pressable style={styles.button} onPress={() => router.push(route)}>
-      <Text style={styles.text}>{title}</Text>
-    </Pressable>
+    <TouchableOpacity style={styles.button} onPress={() => router.push("/")}>
+      <Text style={styles.text}>🏠 Home</Text>
+    </TouchableOpacity>
   );
 }
 
 const styles = StyleSheet.create({
   button: {
-    backgroundColor: "#3b82f6",
-    paddingVertical: 15,
-    paddingHorizontal: 30,
+    marginTop: 40,
+    backgroundColor: "#2563eb",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
     borderRadius: 10,
-    marginVertical: 10,
   },
   text: {
-    color: "#fff",
+    color: "white",
     fontSize: 18,
-    fontWeight: "600",
+    fontWeight: "bold",
   },
 });
-
