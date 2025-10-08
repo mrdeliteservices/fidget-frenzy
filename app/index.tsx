@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React, { useRef, useEffect } from "react";
 import {
   View,
   Text,
@@ -28,9 +28,9 @@ const fidgets = [
   },
   {
     id: "2",
-    name: "Balloon Popper",
+    name: "Bubble Popper",
     route: "/screens/balloon-popper",
-    icon: require("../assets/icons/balloon.png"),
+    icon: require("../assets/icons/bubble.png"),
   },
   {
     id: "3",
@@ -58,9 +58,14 @@ const fidgets = [
   },
 ];
 
-// 🟡 Haptic + metallic gear click (stopped when navigating)
+// 🟡 Haptic + metallic gear click (now tracked by SoundManager)
 async function click() {
   await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+  // stop any ongoing click before starting new
+  await GlobalSoundManager.stop("menuSnap");
+
+  // play a new click
   await GlobalSoundManager.play(
     "menuSnap",
     require("../assets/sounds/gear-click.mp3"),
@@ -70,6 +75,13 @@ async function click() {
 
 export default function MenuScreen() {
   const scrollX = useRef(new Animated.Value(0)).current;
+
+  // safety cleanup when leaving menu screen
+  useEffect(() => {
+    return () => {
+      GlobalSoundManager.stopAll();
+    };
+  }, []);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
@@ -131,6 +143,7 @@ export default function MenuScreen() {
               <TouchableOpacity
                 activeOpacity={0.85}
                 onPress={async () => {
+                  // ensure any click sound is stopped immediately
                   await GlobalSoundManager.stopAll();
                   router.push(item.route);
                 }}
@@ -170,7 +183,7 @@ export default function MenuScreen() {
           }}
         />
 
-        {/* 🟡 Glowing navigation dots */}
+        {/* 🟡 Glowing dots */}
         <View style={styles.dots}>
           {fidgets.map((_, i) => {
             const inputRange = [
