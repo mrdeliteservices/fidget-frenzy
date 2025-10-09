@@ -10,12 +10,11 @@ import {
   SafeAreaView,
   StatusBar,
 } from "react-native";
-import { router } from "expo-router";
+import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 
 const BRAND = { blue: "#0B1E3D", gold: "#FDD017" };
 
-// ✨ Taglines to rotate
 const TAGLINES = [
   "Tap. Spin. Pop. Repeat.",
   "Settle your hands. Free your mind.",
@@ -26,6 +25,7 @@ const TAGLINES = [
 const SUBLINE = "Tiny tools to calm busy hands.";
 
 export default function Welcome() {
+  const router = useRouter();
   const logoScale = useRef(new Animated.Value(0.85)).current;
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const glowOpacity = useRef(new Animated.Value(0)).current;
@@ -39,8 +39,8 @@ export default function Welcome() {
 
   const goHome = React.useCallback(() => {
     Haptics.selectionAsync();
-    router.replace("/");
-  }, []);
+    router.replace("/home"); // ← go to /home, not /
+  }, [router]);
 
   useEffect(() => {
     Animated.sequence([
@@ -101,7 +101,6 @@ export default function Welcome() {
             forceRender();
             rotate();
           } else {
-            // Fade in footer before navigating home
             Animated.timing(footerOpacity, {
               toValue: 1,
               duration: 700,
@@ -148,20 +147,14 @@ export default function Welcome() {
             source={require("../assets/brand/fidget-frenzy-logo.png")}
             style={[
               styles.logo,
-              {
-                opacity: logoOpacity,
-                transform: [{ scale: logoScale }],
-              },
+              { opacity: logoOpacity, transform: [{ scale: logoScale }] },
             ]}
             resizeMode="contain"
           />
           <Animated.Text
             style={[
               styles.tagline,
-              {
-                opacity: taglineOpacity,
-                transform: [{ translateY: taglineTranslate }],
-              },
+              { opacity: taglineOpacity, transform: [{ translateY: taglineTranslate }] },
             ]}
           >
             {taglineText.current}
@@ -169,10 +162,7 @@ export default function Welcome() {
           <Animated.Text
             style={[
               styles.subline,
-              {
-                opacity: taglineOpacity,
-                transform: [{ translateY: taglineTranslate }],
-              },
+              { opacity: taglineOpacity, transform: [{ translateY: taglineTranslate }] },
             ]}
           >
             {SUBLINE}
@@ -180,17 +170,13 @@ export default function Welcome() {
           <Animated.Text
             style={[
               styles.hint,
-              {
-                opacity: taglineOpacity,
-                transform: [{ translateY: taglineTranslate }],
-              },
+              { opacity: taglineOpacity, transform: [{ translateY: taglineTranslate }] },
             ]}
           >
             Tap anywhere to start
           </Animated.Text>
         </View>
 
-        {/* Footer attribution */}
         <Animated.View style={[styles.footer, { opacity: footerOpacity }]}>
           <Text style={styles.footerText}>Built with focus by</Text>
           <Text style={styles.footerBrand}>MRD Elite Studios</Text>
@@ -202,57 +188,13 @@ export default function Welcome() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: "space-between" },
-  center: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 24,
-  },
-  logo: {
-    width: 240,
-    height: 240,
-  },
-  glow: {
-    position: "absolute",
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: "transparent",
-  },
-  tagline: {
-    marginTop: 22,
-    color: "#fff",
-    fontSize: 26,
-    fontWeight: "800",
-    textAlign: "center",
-    letterSpacing: 0.5,
-  },
-  subline: {
-    marginTop: 10,
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 15,
-    textAlign: "center",
-  },
-  hint: {
-    marginTop: 22,
-    color: "rgba(255,255,255,0.5)",
-    fontSize: 13,
-    letterSpacing: 0.4,
-  },
-  footer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 20,
-  },
-  footerText: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.6)",
-    letterSpacing: 0.3,
-  },
-  footerBrand: {
-    fontSize: 15,
-    color: "#FDD017",
-    fontWeight: "700",
-    letterSpacing: 0.5,
-  },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24 },
+  logo: { width: 240, height: 240 },
+  glow: { position: "absolute", width: 280, height: 280, borderRadius: 140, backgroundColor: "transparent" },
+  tagline: { marginTop: 22, color: "#fff", fontSize: 26, fontWeight: "800", textAlign: "center", letterSpacing: 0.5 },
+  subline: { marginTop: 10, color: "rgba(255,255,255,0.85)", fontSize: 15, textAlign: "center" },
+  hint: { marginTop: 22, color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: 0.4 },
+  footer: { alignItems: "center", justifyContent: "center", paddingBottom: 20 },
+  footerText: { fontSize: 13, color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 },
+  footerBrand: { fontSize: 15, color: "#FDD017", fontWeight: "700", letterSpacing: 0.5 },
 });
