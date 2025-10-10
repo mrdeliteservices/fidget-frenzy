@@ -1,0 +1,17 @@
+import React from "react";
+import { StatusBar, View, StyleSheet } from "react-native";
+
+export default function FullscreenWrapper({ children }: { children: React.ReactNode }) {
+  return (
+    <View style={styles.container}>
+      <StatusBar hidden animated />
+      {children}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
+});

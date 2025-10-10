@@ -18,6 +18,7 @@ import {
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import HomeButton from "../../components/HomeButton";
+import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
 
 import {
   balloonImages,
@@ -253,66 +254,68 @@ export default function BalloonPopper({ navigation }: BalloonProps) {
 
   // ---------- Render ----------
   return (
-    <View style={styles.container}>
-      <LinearGradient
-        colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
-        style={StyleSheet.absoluteFill}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
-      />
+    <FullscreenWrapper>
+      <View style={styles.container}>
+        <LinearGradient
+          colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
+          style={StyleSheet.absoluteFill}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+        />
 
-      {/* Clouds */}
-      {clouds.map((c) => {
-        const src: any = cloudImages[c.imgIndex];
-        return (
-          <Image
-            key={c.id}
-            source={src}
-            style={[
-              styles.cloud,
-              { left: c.x, top: c.y, transform: [{ scale: c.scale }] },
-            ]}
-            resizeMode="contain"
-          />
-        );
-      })}
-
-      {/* Balloons */}
-      <Pressable style={StyleSheet.absoluteFill} onPress={handlePress}>
-        {balloons.map((b) => {
-          const src: any = balloonImages[b.color];
-          const left = b.x - b.size / 2;
-          const top = b.y - b.size / 2;
+        {/* Clouds */}
+        {clouds.map((c) => {
+          const src: any = cloudImages[c.imgIndex];
           return (
-            <Animated.Image
-              key={b.id}
+            <Image
+              key={c.id}
               source={src}
               style={[
-                styles.balloon,
-                {
-                  width: b.size,
-                  height: b.size,
-                  left,
-                  top,
-                  transform: [{ scale: b.scale }],
-                },
+                styles.cloud,
+                { left: c.x, top: c.y, transform: [{ scale: c.scale }] },
               ]}
               resizeMode="contain"
             />
           );
         })}
-      </Pressable>
 
-      {/* Score HUD */}
-      <View style={styles.hud}>
-        <Text style={styles.score}>Score: {score}</Text>
-      </View>
+        {/* Balloons */}
+        <Pressable style={StyleSheet.absoluteFill} onPress={handlePress}>
+          {balloons.map((b) => {
+            const src: any = balloonImages[b.color];
+            const left = b.x - b.size / 2;
+            const top = b.y - b.size / 2;
+            return (
+              <Animated.Image
+                key={b.id}
+                source={src}
+                style={[
+                  styles.balloon,
+                  {
+                    width: b.size,
+                    height: b.size,
+                    left,
+                    top,
+                    transform: [{ scale: b.scale }],
+                  },
+                ]}
+                resizeMode="contain"
+              />
+            );
+          })}
+        </Pressable>
 
-      {/* Home Button */}
-      <View style={styles.homeContainer}>
-        <HomeButton />
+        {/* Score HUD */}
+        <View style={styles.hud}>
+          <Text style={styles.score}>Score: {score}</Text>
+        </View>
+
+        {/* Home Button */}
+        <View style={styles.homeContainer}>
+          <HomeButton />
+        </View>
       </View>
-    </View>
+    </FullscreenWrapper>
   );
 }
 

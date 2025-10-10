@@ -8,10 +8,10 @@ import {
   Animated,
   Easing,
   SafeAreaView,
-  StatusBar,
 } from "react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
+import FullscreenWrapper from "../components/FullscreenWrapper"; // ✅ new import
 
 const BRAND = { blue: "#0B1E3D", gold: "#FDD017" };
 
@@ -39,7 +39,7 @@ export default function Welcome() {
 
   const goHome = React.useCallback(() => {
     Haptics.selectionAsync();
-    router.replace("/home"); // ← go to /home, not /
+    router.replace("/home");
   }, [router]);
 
   useEffect(() => {
@@ -126,75 +126,128 @@ export default function Welcome() {
   ]);
 
   return (
-    <TouchableWithoutFeedback onPress={goHome}>
-      <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.center}>
-          <Animated.View
-            pointerEvents="none"
-            style={[
-              styles.glow,
-              {
-                opacity: glowOpacity,
-                shadowColor: BRAND.gold,
-                shadowOffset: { width: 0, height: 0 },
-                shadowOpacity: 0.45,
-                shadowRadius: 28,
-              },
-            ]}
-          />
-          <Animated.Image
-            source={require("../assets/brand/fidget-frenzy-logo.png")}
-            style={[
-              styles.logo,
-              { opacity: logoOpacity, transform: [{ scale: logoScale }] },
-            ]}
-            resizeMode="contain"
-          />
-          <Animated.Text
-            style={[
-              styles.tagline,
-              { opacity: taglineOpacity, transform: [{ translateY: taglineTranslate }] },
-            ]}
-          >
-            {taglineText.current}
-          </Animated.Text>
-          <Animated.Text
-            style={[
-              styles.subline,
-              { opacity: taglineOpacity, transform: [{ translateY: taglineTranslate }] },
-            ]}
-          >
-            {SUBLINE}
-          </Animated.Text>
-          <Animated.Text
-            style={[
-              styles.hint,
-              { opacity: taglineOpacity, transform: [{ translateY: taglineTranslate }] },
-            ]}
-          >
-            Tap anywhere to start
-          </Animated.Text>
-        </View>
+    <FullscreenWrapper>
+      <TouchableWithoutFeedback onPress={goHome}>
+        <SafeAreaView
+          style={[styles.container, { backgroundColor: BRAND.blue }]}
+        >
+          <View style={styles.center}>
+            <Animated.View
+              pointerEvents="none"
+              style={[
+                styles.glow,
+                {
+                  opacity: glowOpacity,
+                  shadowColor: BRAND.gold,
+                  shadowOffset: { width: 0, height: 0 },
+                  shadowOpacity: 0.45,
+                  shadowRadius: 28,
+                },
+              ]}
+            />
+            <Animated.Image
+              source={require("../assets/brand/fidget-frenzy-logo.png")}
+              style={[
+                styles.logo,
+                { opacity: logoOpacity, transform: [{ scale: logoScale }] },
+              ]}
+              resizeMode="contain"
+            />
+            <Animated.Text
+              style={[
+                styles.tagline,
+                {
+                  opacity: taglineOpacity,
+                  transform: [{ translateY: taglineTranslate }],
+                },
+              ]}
+            >
+              {taglineText.current}
+            </Animated.Text>
+            <Animated.Text
+              style={[
+                styles.subline,
+                {
+                  opacity: taglineOpacity,
+                  transform: [{ translateY: taglineTranslate }],
+                },
+              ]}
+            >
+              {SUBLINE}
+            </Animated.Text>
+            <Animated.Text
+              style={[
+                styles.hint,
+                {
+                  opacity: taglineOpacity,
+                  transform: [{ translateY: taglineTranslate }],
+                },
+              ]}
+            >
+              Tap anywhere to start
+            </Animated.Text>
+          </View>
 
-        <Animated.View style={[styles.footer, { opacity: footerOpacity }]}>
-          <Text style={styles.footerText}>Built with focus by</Text>
-          <Text style={styles.footerBrand}>MRD Elite Studios</Text>
-        </Animated.View>
-      </SafeAreaView>
-    </TouchableWithoutFeedback>
+          <Animated.View style={[styles.footer, { opacity: footerOpacity }]}>
+            <Text style={styles.footerText}>Built with focus by</Text>
+            <Text style={styles.footerBrand}>MRD Elite Studios</Text>
+          </Animated.View>
+        </SafeAreaView>
+      </TouchableWithoutFeedback>
+    </FullscreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: "space-between" },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 24 },
+  center: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 24,
+  },
   logo: { width: 240, height: 240 },
-  glow: { position: "absolute", width: 280, height: 280, borderRadius: 140, backgroundColor: "transparent" },
-  tagline: { marginTop: 22, color: "#fff", fontSize: 26, fontWeight: "800", textAlign: "center", letterSpacing: 0.5 },
-  subline: { marginTop: 10, color: "rgba(255,255,255,0.85)", fontSize: 15, textAlign: "center" },
-  hint: { marginTop: 22, color: "rgba(255,255,255,0.5)", fontSize: 13, letterSpacing: 0.4 },
-  footer: { alignItems: "center", justifyContent: "center", paddingBottom: 20 },
-  footerText: { fontSize: 13, color: "rgba(255,255,255,0.6)", letterSpacing: 0.3 },
-  footerBrand: { fontSize: 15, color: "#FDD017", fontWeight: "700", letterSpacing: 0.5 },
+  glow: {
+    position: "absolute",
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    backgroundColor: "transparent",
+  },
+  tagline: {
+    marginTop: 22,
+    color: "#fff",
+    fontSize: 26,
+    fontWeight: "800",
+    textAlign: "center",
+    letterSpacing: 0.5,
+  },
+  subline: {
+    marginTop: 10,
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 15,
+    textAlign: "center",
+  },
+  hint: {
+    marginTop: 22,
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 13,
+    letterSpacing: 0.4,
+  },
+  footer: {
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 20,
+  },
+  footerText: {
+    fontSize: 13,
+    color: "rgba(255,255,255,0.6)",
+    letterSpacing: 0.3,
+  },
+  footerBrand: {
+    fontSize: 15,
+    color: "#FDD017",
+    fontWeight: "700",
+    letterSpacing: 0.5,
+  },
 });
