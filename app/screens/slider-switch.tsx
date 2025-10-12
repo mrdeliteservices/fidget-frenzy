@@ -8,13 +8,12 @@ import {
   SafeAreaView,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
-import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
+import FullscreenWrapper from "../../components/FullscreenWrapper";
+import BackButton from "../../components/BackButton"; // ✅ unified navigation
 
 const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
 
 export default function SliderSwitch() {
-  const router = useRouter();
   const [on, setOn] = useState(false);
   const knobX = useRef(new Animated.Value(0)).current;
 
@@ -35,6 +34,7 @@ export default function SliderSwitch() {
     inputRange: [0, 1],
     outputRange: [4, 64],
   });
+
   const trackColor = knobX.interpolate({
     inputRange: [0, 1],
     outputRange: ["rgba(255,255,255,0.15)", BRAND.purple],
@@ -43,13 +43,8 @@ export default function SliderSwitch() {
   return (
     <FullscreenWrapper>
       <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
-        <View style={styles.header}>
-          <Text onPress={() => router.back()} style={styles.back}>
-            ‹ Back
-          </Text>
-          <Text style={styles.title}>Slider Switch</Text>
-          <View style={{ width: 50 }} />
-        </View>
+        {/* ✅ Clean BackButton only (no header or title) */}
+        <BackButton />
 
         <View style={styles.center}>
           <TouchableWithoutFeedback onPress={toggle}>
@@ -61,6 +56,7 @@ export default function SliderSwitch() {
               />
             </Animated.View>
           </TouchableWithoutFeedback>
+
           <Text style={styles.state}>{on ? "ON" : "OFF"}</Text>
           <Text style={styles.hint}>Tap the switch</Text>
         </View>
@@ -71,16 +67,6 @@ export default function SliderSwitch() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  back: { color: "#fff", fontSize: 18, opacity: 0.9 },
-  title: { color: "#fff", fontSize: 20, fontWeight: "700" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   track: {
     width: 112,

@@ -17,7 +17,7 @@ import {
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
-import HomeButton from "../../components/HomeButton";
+import BackButton from "../../components/BackButton";
 import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
 
 import {
@@ -50,18 +50,13 @@ type Cloud = {
   speed: number;
 };
 
-type BalloonProps = {
-  navigation?: any;
-  route?: any;
-};
-
 // ---------- Constants ----------
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const makeId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 // ---------- Component ----------
-export default function BalloonPopper({ navigation }: BalloonProps) {
+export default function BalloonPopper() {
   const [balloons, setBalloons] = useState<Balloon[]>([]);
   const [clouds, setClouds] = useState<Cloud[]>([]);
   const [score, setScore] = useState<number>(0);
@@ -256,12 +251,20 @@ export default function BalloonPopper({ navigation }: BalloonProps) {
   return (
     <FullscreenWrapper>
       <View style={styles.container}>
+        {/* Background gradient */}
         <LinearGradient
           colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
           style={StyleSheet.absoluteFill}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
         />
+
+        {/* Header (Back + Score) */}
+        <View style={styles.header}>
+          <BackButton />
+          <Text style={styles.score}>Score: {score}</Text>
+          <View style={{ width: 50 }} />
+        </View>
 
         {/* Clouds */}
         {clouds.map((c) => {
@@ -280,7 +283,11 @@ export default function BalloonPopper({ navigation }: BalloonProps) {
         })}
 
         {/* Balloons */}
-        <Pressable style={StyleSheet.absoluteFill} onPress={handlePress}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={handlePress}
+          android_disableSound={true}
+        >
           {balloons.map((b) => {
             const src: any = balloonImages[b.color];
             const left = b.x - b.size / 2;
@@ -304,16 +311,6 @@ export default function BalloonPopper({ navigation }: BalloonProps) {
             );
           })}
         </Pressable>
-
-        {/* Score HUD */}
-        <View style={styles.hud}>
-          <Text style={styles.score}>Score: {score}</Text>
-        </View>
-
-        {/* Home Button */}
-        <View style={styles.homeContainer}>
-          <HomeButton />
-        </View>
       </View>
     </FullscreenWrapper>
   );
@@ -322,6 +319,16 @@ export default function BalloonPopper({ navigation }: BalloonProps) {
 // ---------- Styles ----------
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  header: {
+    position: "absolute",
+    top: 40,
+    left: 15,
+    right: 15,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 10, // ✅ keeps BackButton functional
+  },
   cloud: {
     position: "absolute",
     width: 220,
@@ -329,15 +336,6 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   balloon: { position: "absolute" },
-  hud: {
-    position: "absolute",
-    top: 40,
-    left: 15,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 10,
-    backgroundColor: "rgba(0,0,0,0.35)",
-  },
   score: {
     color: "white",
     fontSize: 18,
@@ -345,10 +343,5 @@ const styles = StyleSheet.create({
     textShadowColor: "#000",
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
-  },
-  homeContainer: {
-    position: "absolute",
-    top: 10,
-    left: 10,
   },
 });

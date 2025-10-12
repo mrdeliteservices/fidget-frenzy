@@ -13,7 +13,7 @@ import Animated, {
   FrameInfo,
 } from "react-native-reanimated";
 
-import HomeButton from "../../components/HomeButton";
+import BackButton from "../../components/BackButton";
 import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
 
 // ---------- Config ----------
@@ -230,7 +230,12 @@ export default function SpinnerScreen() {
   return (
     <FullscreenWrapper>
       <View style={styles.container}>
-        <Text style={styles.title}>🌀 Spinner</Text>
+        {/* Back Button and Title */}
+        <View style={styles.header}>
+          <BackButton />
+          <Text style={styles.title}>Spinner</Text>
+          <View style={{ width: 50 }} />
+        </View>
 
         <GestureDetector gesture={pan}>
           <Animated.View
@@ -270,8 +275,6 @@ export default function SpinnerScreen() {
             <ArmGroup angle="240deg" />
           </Animated.View>
         </GestureDetector>
-
-        <HomeButton />
       </View>
     </FullscreenWrapper>
   );
@@ -280,23 +283,30 @@ export default function SpinnerScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    justifyContent: "center",
+    justifyContent: "center", // ✅ centers spinner properly
     alignItems: "center",
     backgroundColor: "#0b1220",
   },
-  title: {
+  header: {
     position: "absolute",
     top: 50,
+    left: 16,
+    right: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    zIndex: 10, // ✅ ensures BackButton sits above spinner
+  },
+  title: {
+    color: "white",
     fontSize: 22,
     fontWeight: "700",
-    color: "white",
   },
   spinnerBody: {
     width: 320,
     height: 320,
     justifyContent: "center",
     alignItems: "center",
-    position: "relative",
   },
   hub: {
     borderWidth: 3,
