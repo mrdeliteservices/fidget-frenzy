@@ -8,13 +8,12 @@ import {
   SafeAreaView,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
-import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
+import FullscreenWrapper from "../../components/FullscreenWrapper";
+import BackButton from "../../components/BackButton"; // ✅ unified navigation
 
 const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
 
 export default function StressBall() {
-  const router = useRouter();
   const scale = useRef(new Animated.Value(1)).current;
 
   const squeeze = async () => {
@@ -40,13 +39,8 @@ export default function StressBall() {
   return (
     <FullscreenWrapper>
       <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
-        <View style={styles.header}>
-          <Text onPress={() => router.back()} style={styles.back}>
-            ‹ Back
-          </Text>
-          <Text style={styles.title}>Stress Ball</Text>
-          <View style={{ width: 50 }} />
-        </View>
+        {/* ✅ Clean BackButton only (no header or title) */}
+        <BackButton />
 
         <View style={styles.center}>
           <TouchableWithoutFeedback onPress={squeeze}>
@@ -63,16 +57,6 @@ const SIZE = 200;
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  back: { color: "#fff", fontSize: 18, opacity: 0.9 },
-  title: { color: "#fff", fontSize: 20, fontWeight: "700" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
   ball: {
     width: SIZE,

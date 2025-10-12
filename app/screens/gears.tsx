@@ -8,14 +8,13 @@ import {
   TouchableOpacity,
   SafeAreaView,
 } from "react-native";
-import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
+import FullscreenWrapper from "../../components/FullscreenWrapper";
+import BackButton from "../../components/BackButton"; // ✅ unified navigation button
 
 const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
 
 export default function Gears() {
-  const router = useRouter();
   const spinA = useRef(new Animated.Value(0)).current;
   const spinB = useRef(new Animated.Value(0)).current;
   const [running, setRunning] = useState(true);
@@ -64,16 +63,11 @@ export default function Gears() {
   return (
     <FullscreenWrapper>
       <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
-        <View style={styles.header}>
-          <Text onPress={() => router.back()} style={styles.back}>
-            ‹ Back
-          </Text>
-          <Text style={styles.title}>Gears</Text>
-          <View style={{ width: 50 }} />
-        </View>
+        {/* ✅ Back button only, no header or title */}
+        <BackButton />
 
         <View style={styles.center}>
-          <View style={{ flexDirection: "row", gap: 16, alignItems: "center" }}>
+          <View style={styles.gearRow}>
             <Animated.Image
               source={require("../../assets/icons/gears.png")}
               style={[styles.gear, { transform: [{ rotate: rotA }] }]}
@@ -95,6 +89,7 @@ export default function Gears() {
               {running ? "Pause" : "Resume"}
             </Text>
           </TouchableOpacity>
+
           <Text style={styles.hint}>No sound (disabled for now)</Text>
         </View>
       </SafeAreaView>
@@ -104,17 +99,8 @@ export default function Gears() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: {
-    paddingHorizontal: 16,
-    paddingTop: 8,
-    paddingBottom: 6,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  back: { color: "#fff", fontSize: 18, opacity: 0.9 },
-  title: { color: "#fff", fontSize: 20, fontWeight: "700" },
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  gearRow: { flexDirection: "row", gap: 16, alignItems: "center" },
   gear: { width: 140, height: 140 },
   gearSmall: { width: 90, height: 90 },
   button: {

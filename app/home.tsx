@@ -1,206 +1,192 @@
-import React, { useRef, useEffect } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
-  Animated,
   Dimensions,
   StyleSheet,
   TouchableOpacity,
   Image,
   SafeAreaView,
 } from "react-native";
-import { useRouter } from "expo-router";
+import Animated, {
+  useSharedValue,
+  useAnimatedScrollHandler,
+  useAnimatedStyle,
+  interpolate,
+  Extrapolate,
+  useDerivedValue,
+} from "react-native-reanimated";
+import { LinearGradient } from "expo-linear-gradient";
+import { useRouter, router } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { GlobalSoundManager } from "../lib/soundManager";
-import FullscreenWrapper from "../components/FullscreenWrapper"; // ✅ new import
+import FullscreenWrapper from "../components/FullscreenWrapper";
 
 const { width } = Dimensions.get("window");
-const CARD_WIDTH = width * 0.55;
-const SPACING = 20;
-const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
+const CARD_WIDTH = width * 0.58;
+const SPACING = 22;
+const ITEM_INTERVAL = CARD_WIDTH + SPACING;
+const PADDING_H = (width - CARD_WIDTH) / 2;
+
+const BRAND = {
+  blue: "#0B1E3D",
+  gold: "#FDD017",
+};
 
 const fidgets = [
-  {
-    id: "1",
-    name: "Fidget Spinner",
-    route: "/screens/spinner-screen",
-    icon: require("../assets/icons/spinner.png"),
-  },
-  {
-    id: "2",
-    name: "Balloon Popper", // ✅ correct label
-    route: "/screens/balloon-popper",
-    icon: require("../assets/icons/balloon.png"),
-  },
-  {
-    id: "3",
-    name: "Stress Ball",
-    route: "/screens/stress-ball",
-    icon: require("../assets/icons/stressball.png"),
-  },
-  {
-    id: "4",
-    name: "Slider Switch",
-    route: "/screens/slider-switch",
-    icon: require("../assets/icons/slider.png"),
-  },
-  {
-    id: "5",
-    name: "Odometer",
-    route: "/screens/odometer",
-    icon: require("../assets/icons/odometer.png"),
-  },
-  {
-    id: "6",
-    name: "Gears",
-    route: "/screens/gears",
-    icon: require("../assets/icons/gears.png"),
-  },
+  { id: "1", name: "Fidget Spinner", route: "/screens/spinner-screen", icon: require("../assets/icons/spinner.png") },
+  { id: "2", name: "Balloon Popper", route: "/screens/balloon-popper", icon: require("../assets/icons/balloon.png") },
+  { id: "3", name: "Stress Ball", route: "/screens/stress-ball", icon: require("../assets/icons/stressball.png") },
+  { id: "4", name: "Slider Switch", route: "/screens/slider-switch", icon: require("../assets/icons/slider.png") },
+  { id: "5", name: "Odometer", route: "/screens/odometer", icon: require("../assets/icons/odometer.png") },
+  { id: "6", name: "Gears", route: "/screens/gears", icon: require("../assets/icons/gears.png") },
 ];
 
-export default function Home() {
-  const router = useRouter();
-  const scrollX = useRef(new Animated.Value(0)).current;
+// ---------- Subcomponent for each card ----------
+function FidgetCard({ item, index, scrollX, onPress }: any) {
+  const animatedStyle = useAnimatedStyle(() => {
+    const inputRange = [
+      (index - 1) * ITEM_INTERVAL,
+      index * ITEM_INTERVAL,
+      (index + 1) * ITEM_INTERVAL,
+    ];
 
+    const scale = interpolate(scrollX.value, inputRange, [0.9, 1.1, 0.9], Extrapolate.CLAMP);
+    const glow = interpolate(scrollX.value, inputRange, [0, 1, 0], Extrapolate.CLAMP);
+
+    return {
+      transform: [{ scale }],
+      borderColor: `rgba(253,208,23,${glow})`,
+      shadowOpacity: glow * 0.7,
+    };
+  });
+
+  return (
+    <TouchableOpacity
+      activeOpacity={0.9}
+      onPress={onPress}
+      style={{ width: CARD_WIDTH, marginHorizontal: SPACING / 2 }}
+    >
+      <Animated.View style={[styles.card, animatedStyle]}>
+        <LinearGradient
+          colors={["rgba(255,255,255,0.06)", "rgba(255,255,255,0.02)"]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.cardFill}
+        >
+          <Image source={item.icon} style={styles.icon} resizeMode="contain" />
+          <Text style={styles.label}>{item.name}</Text>
+        </LinearGradient>
+      </Animated.View>
+    </TouchableOpacity>
+  );
+}
+
+export default function Home() {
+  const routerHook = useRouter();
+  const scrollX = useSharedValue(0);
+  const [lastTap, setLastTap] = useState(0);
+
+  // ✅ Type-safe useEffect (no async return)
   useEffect(() => {
+    const prefetchRoutes = async () => {
+      try {
+        await Promise.all([
+          router.prefetch("/screens/spinner-screen"),
+          router.prefetch("/screens/balloon-popper"),
+          router.prefetch("/screens/stress-ball"),
+          router.prefetch("/screens/slider-switch"),
+          router.prefetch("/screens/odometer"),
+          router.prefetch("/screens/gears"),
+        ]);
+      } catch (err) {
+        console.warn("Prefetch failed:", err);
+      }
+    };
+
+    prefetchRoutes();
+
+    // Cleanup on unmount
     return () => {
       GlobalSoundManager.stopAll();
     };
   }, []);
 
-  const click = async () => {
+  const onScroll = useAnimatedScrollHandler({
+    onScroll: (e) => {
+      scrollX.value = e.contentOffset.x;
+    },
+  });
+
+  const handleTap = async (route: string, index: number) => {
+    const now = Date.now();
+    if (now - lastTap < 250) return; // debounce
+    setLastTap(now);
+
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     } catch {}
+
+    GlobalSoundManager.stopAll();
+    routerHook.push(route);
   };
+
+  // derive progress for dots (UI-thread)
+  const progress = useDerivedValue(() => scrollX.value / ITEM_INTERVAL);
 
   return (
     <FullscreenWrapper>
-      <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
-        <Text style={styles.title}>FIDGET FRENZY</Text>
+      <SafeAreaView style={styles.container}>
+        <LinearGradient
+          colors={["#09152E", BRAND.blue]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+
+        <View style={styles.headerWrap}>
+          <Text style={styles.title}>FIDGET FRENZY</Text>
+          <View style={styles.titleLine} />
+        </View>
 
         <Animated.FlatList
           data={fidgets}
           keyExtractor={(item) => item.id}
           horizontal
           showsHorizontalScrollIndicator={false}
-          snapToInterval={CARD_WIDTH + SPACING}
+          snapToInterval={ITEM_INTERVAL}
           decelerationRate="fast"
+          bounces={false}
           contentContainerStyle={{
-            paddingHorizontal: (width - CARD_WIDTH) / 2,
+            paddingHorizontal: PADDING_H,
             alignItems: "center",
           }}
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-            { useNativeDriver: true }
+          onScroll={onScroll}
+          scrollEventThrottle={1}
+          renderItem={({ item, index }) => (
+            <FidgetCard
+              item={item}
+              index={index}
+              scrollX={scrollX}
+              onPress={() => handleTap(item.route, index)}
+            />
           )}
-          scrollEventThrottle={16}
-          onMomentumScrollEnd={click}
-          renderItem={({ item, index }) => {
-            const inputRange = [
-              (index - 1) * (CARD_WIDTH + SPACING),
-              index * (CARD_WIDTH + SPACING),
-              (index + 1) * (CARD_WIDTH + SPACING),
-            ];
-
-            const scale = scrollX.interpolate({
-              inputRange,
-              outputRange: [0.9, 1.2, 0.9],
-              extrapolate: "clamp",
-            });
-            const opacity = scrollX.interpolate({
-              inputRange,
-              outputRange: [0.6, 1, 0.6],
-              extrapolate: "clamp",
-            });
-            const borderColor = scrollX.interpolate({
-              inputRange,
-              outputRange: ["transparent", BRAND.gold, "transparent"],
-              extrapolate: "clamp",
-            });
-            const labelScale = scrollX.interpolate({
-              inputRange,
-              outputRange: [1, 1.15, 1],
-              extrapolate: "clamp",
-            });
-            const labelColor = scrollX.interpolate({
-              inputRange,
-              outputRange: ["#FFF", BRAND.gold, "#FFF"],
-              extrapolate: "clamp",
-            });
-
-            return (
-              <TouchableOpacity
-                activeOpacity={0.85}
-                onPress={() => {
-                  GlobalSoundManager.stopAll();
-                  router.push(item.route);
-                }}
-                style={{ width: CARD_WIDTH, marginHorizontal: SPACING / 2 }}
-              >
-                <Animated.View
-                  style={[
-                    styles.card,
-                    {
-                      transform: [{ scale }],
-                      opacity,
-                      borderColor,
-                      shadowColor: BRAND.gold,
-                      shadowOpacity: 0.7,
-                      shadowRadius: 12,
-                      elevation: 10,
-                    },
-                  ]}
-                >
-                  <Image
-                    source={item.icon}
-                    style={styles.icon}
-                    resizeMode="contain"
-                  />
-                  <Animated.Text
-                    style={[
-                      styles.label,
-                      { transform: [{ scale: labelScale }], color: labelColor },
-                    ]}
-                  >
-                    {item.name}
-                  </Animated.Text>
-                </Animated.View>
-              </TouchableOpacity>
-            );
-          }}
         />
 
-        <View style={styles.dots}>
+        {/* Animated Dots perfectly synced with scroll */}
+        <View style={styles.dotsWrap}>
           {fidgets.map((_, i) => {
-            const inputRange = [
-              (i - 1) * (CARD_WIDTH + SPACING),
-              i * (CARD_WIDTH + SPACING),
-              (i + 1) * (CARD_WIDTH + SPACING),
-            ];
-            const dotScale = scrollX.interpolate({
-              inputRange,
-              outputRange: [1, 1.5, 1],
-              extrapolate: "clamp",
+            const animatedDot = useAnimatedStyle(() => {
+              const diff = Math.abs(progress.value - i);
+              const scale = interpolate(diff, [0, 1], [1.6, 1], Extrapolate.CLAMP);
+              const opacity = interpolate(diff, [0, 1], [1, 0.4], Extrapolate.CLAMP);
+              return {
+                transform: [{ scale }],
+                opacity,
+                backgroundColor: diff < 0.3 ? BRAND.gold : "rgba(255,255,255,0.4)",
+              };
             });
-            const dotColor = scrollX.interpolate({
-              inputRange,
-              outputRange: [
-                "rgba(255,255,255,0.3)",
-                BRAND.gold,
-                "rgba(255,255,255,0.3)",
-              ],
-              extrapolate: "clamp",
-            });
-            return (
-              <Animated.View
-                key={i}
-                style={[
-                  styles.dot,
-                  { backgroundColor: dotColor, transform: [{ scale: dotScale }] },
-                ]}
-              />
-            );
+            return <Animated.View key={i} style={[styles.dot, animatedDot]} />;
           })}
         </View>
       </SafeAreaView>
@@ -209,33 +195,58 @@ export default function Home() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
+  container: { flex: 1, backgroundColor: "#000" },
+  headerWrap: { paddingTop: 8, paddingBottom: 12 },
   title: {
     textAlign: "center",
     fontSize: 28,
-    fontWeight: "bold",
-    color: "#FFF",
-    marginTop: 8,
-    marginBottom: 12,
+    fontWeight: "800",
+    color: "#fff",
     letterSpacing: 1.5,
   },
+  titleLine: {
+    alignSelf: "center",
+    marginTop: 6,
+    width: 160,
+    height: 2,
+    borderRadius: 2,
+    backgroundColor: "rgba(253,208,23,0.8)",
+  },
   card: {
-    backgroundColor: "rgba(255,255,255,0.05)",
     borderRadius: 20,
-    alignItems: "center",
-    justifyContent: "center",
     padding: 20,
     borderWidth: 2,
+    backgroundColor: "rgba(255,255,255,0.04)",
+    shadowColor: BRAND.gold,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 0 },
   },
-  icon: { width: 150, height: 150 },
-  label: { fontSize: 18, marginTop: 15, fontWeight: "600" },
-  dots: {
+  cardFill: {
+    borderRadius: 18,
+    padding: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  icon: { width: 155, height: 155 },
+  label: {
+    fontSize: 18,
+    marginTop: 14,
+    fontWeight: "700",
+    color: BRAND.gold,
+    letterSpacing: 0.5,
+  },
+  dotsWrap: {
     position: "absolute",
     bottom: 20,
+    width: "100%",
     flexDirection: "row",
     justifyContent: "center",
     alignItems: "center",
-    width: "100%",
+    gap: 10,
   },
-  dot: { width: 10, height: 10, borderRadius: 5, marginHorizontal: 6 },
+  dot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
 });
