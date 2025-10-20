@@ -1,5 +1,6 @@
 import React from "react";
-import { TouchableOpacity, Text, StyleSheet, View } from "react-native";
+import { TouchableOpacity, StyleSheet, View } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 
 export default function BackButton() {
@@ -21,7 +22,7 @@ export default function BackButton() {
         activeOpacity={0.7}
         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} // ✅ smoother tap zone
       >
-        <Text style={styles.text}>‹ Back</Text>
+        <Ionicons name="arrow-back" size={26} color="#C0C0C0" />
       </TouchableOpacity>
     </View>
   );
@@ -29,16 +30,12 @@ export default function BackButton() {
 
 const styles = StyleSheet.create({
   wrapper: {
-    minWidth: 60, // ✅ prevents layout shift in header alignment
+    minWidth: 60, // ✅ keeps header alignment consistent
+    alignItems: "flex-start",
+    justifyContent: "center",
   },
   button: {
     paddingVertical: 6,
     paddingHorizontal: 10,
-  },
-  text: {
-    color: "#fff",
-    fontSize: 18,
-    fontWeight: "500",
-    opacity: 0.9,
   },
 });

@@ -1,28 +1,24 @@
-import { Audio } from "expo-av";
-import * as Haptics from "expo-haptics";
-import { LinearGradient } from "expo-linear-gradient";
+// app/screens/spinner-screen.tsx
 import React, { useEffect, useRef, useState } from "react";
-import {
-  StyleSheet,
-  Text,
-  View,
-  Modal,
-  TouchableOpacity,
-  Pressable,
-} from "react-native";
+import { View, Text, StyleSheet } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
-  runOnUI,
   useAnimatedStyle,
   useFrameCallback,
   useSharedValue,
   FrameInfo,
 } from "react-native-reanimated";
+import { Audio } from "expo-av";
+import * as Haptics from "expo-haptics";
+import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
-import FullscreenWrapper from "../../components/FullscreenWrapper";
 
+import BackButton from "../../components/BackButton";
+import FullscreenWrapper from "../../components/FullscreenWrapper";
+import SettingsModal from "../../components/SettingsModal";
+
+// ---------- Config ----------
 const CONFIG = {
   HUB_DIAMETER: 70,
   WEIGHT_DIAMETER: 90,
@@ -34,104 +30,119 @@ const CONFIG = {
   HARD_FLICK_THRESHOLD: 1000,
   DAMPING_PER_SECOND: 0.75,
   OMEGA_STOP: 15,
-  HAPTIC_DEGREES: 90,
 };
 
-export default function SpinnerScreen() {
-  const router = useRouter();
+const BRAND = { blue: "#0B1E3D", gold: "#FDD017", silver: "#C0C0C0" };
 
-  // ----- Shared & State Values -----
-  const angle = useSharedValue(0);
-  const omega = useSharedValue(0);
-  const lastHapticAt = useSharedValue(0);
-  const lastAngle = useSharedValue(0);
-  const accumulatedDegrees = useSharedValue(0);
-  const totalSpins = useSharedValue(0);
+export default function SpinnerScreen() {
+  // motion state
+  const angle = useSharedValue(0);                 // total rotation (deg), continuous/unbounded
+  const omega = useSharedValue(0);                 // angular velocity (deg/s)
+  const lastCountAt = useSharedValue(0);           // last angle at which we incremented count (deg)
   const centerX = useSharedValue(0);
   const centerY = useSharedValue(0);
-  const dragStartAngle = useSharedValue(0);
-  const dragStartRotation = useSharedValue(0);
+  const dragStartRotation = useSharedValue(0);     // angle at drag begin
   const isDragging = useSharedValue(false);
+
+  // NEW: unwrap support for dragging
+  const prevDragAngle = useSharedValue(0);         // previous raw atan2 (rad)
+  const cumulativeDragDelta = useSharedValue(0);   // accumulated drag delta (deg, continuous)
+
   const bodyRef = useRef<View>(null);
+
+  // React state
   const [spinCount, setSpinCount] = useState(0);
-  const [muted, setMuted] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
   const [settingsVisible, setSettingsVisible] = useState(false);
 
-  // ---------- SOUND ----------
+  // mounted guard
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // ---------- Sound ----------
   const whooshRef = useRef<Audio.Sound | null>(null);
   const whooshPlaying = useRef(false);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const { sound: whoosh } = await Audio.Sound.createAsync(
-        require("../../assets/sounds/whoosh-sound-effect-240257.mp3"),
-        { isLooping: false, volume: muted ? 0 : 1.0 }
-      );
-      whooshRef.current = whoosh;
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+          require("../../assets/sounds/whoosh-sound-effect-240257.mp3"),
+          { isLooping: false, volume: 1.0 }
+        );
+        if (!cancelled) whooshRef.current = sound;
+        else await sound.unloadAsync();
+      } catch {}
     })();
-
     return () => {
+      cancelled = true;
       whooshRef.current?.unloadAsync().catch(() => {});
+      whooshRef.current = null;
     };
-  }, [muted]);
+  }, []);
 
   const playWhoosh = async () => {
-    if (muted || !whooshRef.current || whooshPlaying.current) return;
-    const st = await whooshRef.current.getStatusAsync();
-    if ("isPlaying" in st && st.isPlaying) return;
-    whooshPlaying.current = true;
-    whooshRef.current.setOnPlaybackStatusUpdate((s: any) => {
-      if ("didJustFinish" in s && s.didJustFinish) {
-        whooshPlaying.current = false;
-        whooshRef.current?.setPositionAsync(0).catch(() => {});
-        whooshRef.current?.setOnPlaybackStatusUpdate(null);
-      }
-    });
-    await whooshRef.current.playFromPositionAsync(0);
+    if (!mountedRef.current || !soundOn) return;
+    const snd = whooshRef.current;
+    if (!snd || whooshPlaying.current) return;
+    try {
+      const st = await snd.getStatusAsync();
+      if ("isPlaying" in st && st.isPlaying) return;
+
+      whooshPlaying.current = true;
+      snd.setOnPlaybackStatusUpdate((s: any) => {
+        if ("didJustFinish" in s && s.didJustFinish) {
+          whooshPlaying.current = false;
+          snd.setPositionAsync(0).catch(() => {});
+          snd.setOnPlaybackStatusUpdate(null);
+        }
+      });
+      await snd.playFromPositionAsync(0);
+    } catch {
+      whooshPlaying.current = false;
+    }
   };
 
   const stopSound = async () => {
-    if (whooshRef.current) {
-      await whooshRef.current.stopAsync().catch(() => {});
-      await whooshRef.current.setPositionAsync(0).catch(() => {});
-      whooshRef.current.setOnPlaybackStatusUpdate(null);
-    }
+    const snd = whooshRef.current;
+    if (!snd) return;
+    try {
+      await snd.stopAsync();
+      await snd.setPositionAsync(0);
+      snd.setOnPlaybackStatusUpdate(null);
+    } catch {}
     whooshPlaying.current = false;
   };
 
   const triggerHaptic = () => {
-    if (!muted) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   };
 
-  // ---------- COUNT LOGIC ----------
-  const handleAngleUpdate = (newAngle: number) => {
-    "worklet";
-    const delta = newAngle - lastAngle.value;
-    lastAngle.value = newAngle;
-    accumulatedDegrees.value += Math.abs(delta);
-
-    while (accumulatedDegrees.value >= 360) {
-      accumulatedDegrees.value -= 360;
-      totalSpins.value += 1;
-      runOnJS(setSpinCount)(totalSpins.value);
-    }
+  // ---------- Layout ----------
+  const onBodyLayout = () => {
+    setTimeout(() => {
+      bodyRef.current?.measureInWindow((x, y, w, h) => {
+        centerX.value = x + w / 2;
+        centerY.value = y + h / 2;
+      });
+    }, 0);
   };
 
-  // ✅ FIXED RESET FUNCTION
-  const resetAllCounters = () => {
-    runOnUI(() => {
-      "worklet";
-      angle.value = 0;
-      omega.value = 0;
-      totalSpins.value = 0;
-      accumulatedDegrees.value = 0;
-      lastAngle.value = 0;
-      lastHapticAt.value = 0;
-      runOnJS(setSpinCount)(0);
-    })();
+  // ---------- Counter ----------
+  const incrementSpinCount = () => {
+    if (mountedRef.current) setSpinCount((p) => p + 1);
+  };
+  const resetSpinCount = () => {
+    if (mountedRef.current) setSpinCount(0);
   };
 
-  // ---------- FRAME LOOP ----------
+  // ---------- Frame Loop ----------
   useFrameCallback((frame: FrameInfo) => {
     "worklet";
     const dt = frame.timeSincePreviousFrame ?? 0;
@@ -148,36 +159,61 @@ export default function SpinnerScreen() {
       }
     }
 
-    handleAngleUpdate(angle.value);
-
-    const d = angle.value - lastHapticAt.value;
-    if (Math.abs(d) >= CONFIG.HAPTIC_DEGREES) {
-      lastHapticAt.value = angle.value;
+    // Count every full 360° rotation (CW or CCW)
+    const deltaSinceCount = Math.abs(angle.value - lastCountAt.value);
+    if (deltaSinceCount >= 360) {
+      lastCountAt.value = angle.value;
       runOnJS(triggerHaptic)();
+      runOnJS(incrementSpinCount)();
     }
   });
 
-  // ---------- GESTURE ----------
+  // ---------- Gesture ----------
   const pan = Gesture.Pan()
     .onBegin((e: any) => {
       runOnJS(stopSound)();
       isDragging.value = true;
+
+      // record starting rotation and reset unwrap accumulators
+      dragStartRotation.value = angle.value;
+
       const dx = e.absoluteX - centerX.value;
       const dy = e.absoluteY - centerY.value;
-      dragStartAngle.value = Math.atan2(dy, dx);
-      dragStartRotation.value = angle.value;
+      const a0 = Math.atan2(dy, dx); // radians
+      prevDragAngle.value = a0;
+      cumulativeDragDelta.value = 0; // degrees
+
       omega.value = 0;
     })
     .onChange((e: any) => {
       const dx = e.absoluteX - centerX.value;
       const dy = e.absoluteY - centerY.value;
-      const a = Math.atan2(dy, dx);
-      const deltaDeg = ((a - dragStartAngle.value) * 180) / Math.PI;
-      angle.value = dragStartRotation.value + deltaDeg;
-      handleAngleUpdate(angle.value);
+      const a = Math.atan2(dy, dx); // current raw angle (rad)
+
+      // unwrap: keep diff inside (-PI, PI]
+      let diff = a - prevDragAngle.value;
+      if (diff > Math.PI) diff -= 2 * Math.PI;
+      if (diff <= -Math.PI) diff += 2 * Math.PI;
+
+      // accumulate continuous rotation (in degrees)
+      cumulativeDragDelta.value += (diff * 180) / Math.PI;
+      prevDragAngle.value = a;
+
+      // set absolute spinner angle from start + accumulated drag
+      angle.value = dragStartRotation.value + cumulativeDragDelta.value;
+
+      // Count during drag as well
+      const deltaSinceCount = Math.abs(angle.value - lastCountAt.value);
+      if (deltaSinceCount >= 360) {
+        lastCountAt.value = angle.value;
+        runOnJS(triggerHaptic)();
+        runOnJS(incrementSpinCount)();
+      }
     })
     .onEnd((e: any) => {
       isDragging.value = false;
+
+      // compute tangential velocity for flick
       const dx = e.absoluteX - centerX.value;
       const dy = e.absoluteY - centerY.value;
       const r = Math.max(Math.hypot(dx, dy), 1);
@@ -197,18 +233,10 @@ export default function SpinnerScreen() {
       }
     });
 
+  // ---------- Animation ----------
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${angle.value}deg` }],
   }));
-
-  const onBodyLayout = () => {
-    setTimeout(() => {
-      bodyRef.current?.measureInWindow((x, y, w, h) => {
-        centerX.value = x + w / 2;
-        centerY.value = y + h / 2;
-      });
-    }, 0);
-  };
 
   const ArmGroup = ({ angle: armAngle }: { angle: string }) => (
     <View style={[styles.armGroup, { transform: [{ rotate: armAngle }] }]}>
@@ -264,22 +292,27 @@ export default function SpinnerScreen() {
     </View>
   );
 
+  // ---------- Render ----------
   return (
     <FullscreenWrapper>
       <View style={styles.container}>
         {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Ionicons name="arrow-back" size={28} color="silver" />
-          </TouchableOpacity>
-
-          <Text style={styles.counterText}>🌀 Spins: {spinCount}</Text>
-
-          <TouchableOpacity onPress={() => setSettingsVisible(true)}>
-            <Ionicons name="settings-sharp" size={26} color="silver" />
-          </TouchableOpacity>
+        <View style={styles.headerRow}>
+          <BackButton />
+          <Ionicons
+            name="settings-sharp"
+            size={26}
+            color={BRAND.silver}
+            onPress={() => setSettingsVisible(true)}
+          />
         </View>
 
+        {/* Centered Counter */}
+        <View pointerEvents="none" style={styles.counterCenter}>
+          <Text style={styles.counterText}>🌀 Spins: {spinCount}</Text>
+        </View>
+
+        {/* Spinner */}
         <GestureDetector gesture={pan}>
           <Animated.View
             ref={bodyRef}
@@ -290,13 +323,26 @@ export default function SpinnerScreen() {
               colors={["#7c2d12", "#f59e0b", "#7c2d12"]}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 1 }}
-              style={styles.hub}
+              style={[
+                styles.hub,
+                {
+                  width: CONFIG.HUB_DIAMETER,
+                  height: CONFIG.HUB_DIAMETER,
+                  borderRadius: CONFIG.HUB_DIAMETER / 2,
+                  justifyContent: "center",
+                  alignItems: "center",
+                },
+              ]}
             >
               <LinearGradient
                 colors={["#fbbf24", "#d97706", "#78350f"]}
                 start={{ x: 0.3, y: 0.3 }}
                 end={{ x: 1, y: 1 }}
-                style={styles.hubInner}
+                style={{
+                  width: CONFIG.HUB_DIAMETER * 0.75,
+                  height: CONFIG.HUB_DIAMETER * 0.75,
+                  borderRadius: (CONFIG.HUB_DIAMETER * 0.75) / 2,
+                }}
               />
             </LinearGradient>
 
@@ -307,41 +353,26 @@ export default function SpinnerScreen() {
         </GestureDetector>
 
         {/* Settings Modal */}
-        <Modal visible={settingsVisible} transparent animationType="fade">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalBox}>
-              <Text style={styles.modalTitle}>Settings ⚙️</Text>
-
-              <Pressable style={styles.modalBtn} onPress={resetAllCounters}>
-                <Text style={styles.modalBtnText}>Reset Counter</Text>
-              </Pressable>
-
-              <Pressable
-                style={styles.modalBtn}
-                onPress={() => setMuted((m) => !m)}
-              >
-                <Text style={styles.modalBtnText}>
-                  {muted ? "Unmute Sounds" : "Mute Sounds"}
-                </Text>
-              </Pressable>
-
-              <Pressable
-                style={[styles.modalBtn, { backgroundColor: "#444" }]}
-                onPress={() => setSettingsVisible(false)}
-              >
-                <Text style={styles.modalBtnText}>Close</Text>
-              </Pressable>
-            </View>
-          </View>
-        </Modal>
+        <SettingsModal
+          visible={settingsVisible}
+          onClose={() => setSettingsVisible(false)}
+          onReset={resetSpinCount}
+          soundOn={soundOn}
+          setSoundOn={setSoundOn}
+        />
       </View>
     </FullscreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#0b1220" },
-  header: {
+  container: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#0b1220",
+  },
+  headerRow: {
     position: "absolute",
     top: 50,
     left: 16,
@@ -351,31 +382,42 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     zIndex: 10,
   },
-  counterText: { color: "#FDD017", fontSize: 18, fontWeight: "700" },
-  spinnerBody: { width: 320, height: 320, justifyContent: "center", alignItems: "center" },
-  hub: {
-    borderWidth: 3,
-    borderColor: "#111",
-    zIndex: 3,
-    width: CONFIG.HUB_DIAMETER,
-    height: CONFIG.HUB_DIAMETER,
-    borderRadius: CONFIG.HUB_DIAMETER / 2,
+  counterCenter: {
+    position: "absolute",
+    top: 50,
+    left: 0,
+    right: 0,
+    alignItems: "center",
+    zIndex: 9,
+  },
+  counterText: {
+    color: BRAND.gold,
+    fontSize: 16,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  spinnerBody: {
+    width: 320,
+    height: 320,
     justifyContent: "center",
     alignItems: "center",
   },
-  hubInner: {
-    width: CONFIG.HUB_DIAMETER * 0.75,
-    height: CONFIG.HUB_DIAMETER * 0.75,
-    borderRadius: (CONFIG.HUB_DIAMETER * 0.75) / 2,
+  hub: { borderWidth: 3, borderColor: "#111", zIndex: 3 },
+  armGroup: {
+    position: "absolute",
+    width: "100%",
+    height: "100%",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  armGroup: { position: "absolute", width: "100%", height: "100%", alignItems: "center", justifyContent: "center" },
   armBase: { position: "absolute", borderRadius: 999 },
-  pinch: { position: "absolute", height: 32, borderRadius: 999, alignSelf: "center", backgroundColor: "#0b1220" },
+  pinch: {
+    position: "absolute",
+    height: 32,
+    borderRadius: 999,
+    alignSelf: "center",
+    backgroundColor: "#0b1220",
+  },
   weightRim: { position: "absolute", justifyContent: "center", alignItems: "center" },
   weightCore: { borderWidth: 3, borderColor: "#111" },
-  modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", alignItems: "center", justifyContent: "center" },
-  modalBox: { backgroundColor: "#222", padding: 20, borderRadius: 12, width: "80%", alignItems: "center" },
-  modalTitle: { color: "#FDD017", fontSize: 20, fontWeight: "700", marginBottom: 20 },
-  modalBtn: { backgroundColor: "#333", paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, marginVertical: 6, width: "100%", alignItems: "center" },
-  modalBtnText: { color: "white", fontSize: 16, fontWeight: "600" },
 });
