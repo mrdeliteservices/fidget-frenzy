@@ -1,14 +1,8 @@
+﻿// app/_layout.tsx
 import React from "react";
-import { GestureHandlerRootView } from "react-native-gesture-handler";
-import { Stack } from "expo-router";
+import Welcome from "./welcome";
 
-export default function Layout() {
-  return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <Stack
-        initialRouteName="index" // ← gate at /index, will redirect to /welcome safely
-        screenOptions={{ headerShown: false, animation: "fade" }}
-      />
-    </GestureHandlerRootView>
-  );
+export default function RootLayout() {
+  // 🚀 Temporary direct render (bypasses expo-router)
+  return <Welcome />;
 }

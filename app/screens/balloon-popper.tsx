@@ -1,3 +1,13 @@
+// ============================================================================
+// 🎈 Fidget Frenzy – Balloon Popper
+// Clean + Fixed Imports for assets (balloons, clouds, sounds)
+// Expo SDK 54 | React Native 0.81 | TypeScript Strict
+// ----------------------------------------------------------------------------
+//  ✅ Correct asset paths
+//  ✅ Fixed TypeScript types
+//  ✅ Crash-safe audio initialization
+// ============================================================================
+
 import React, {
   useCallback,
   useEffect,
@@ -17,19 +27,57 @@ import {
 } from "react-native";
 import { Audio, AVPlaybackStatus } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
-import BackButton from "../../components/BackButton";
-import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
+import BackButton from "@components/BackButton";
+import FullscreenWrapper from "@components/FullscreenWrapper";
+import { rand, pick } from "@utils/random";
 
-import {
-  balloonImages,
-  cloudImages,
-  popSounds,
-  slashSounds,
-  type BalloonColor,
-} from "../../assets";
-import { rand, pick } from "../../utils/random";
+// ---------------------------------------------------------------------------
+// 🧩 ASSET IMPORTS
+// ---------------------------------------------------------------------------
+export type BalloonColor =
+  | "blue"
+  | "green"
+  | "orange"
+  | "pink"
+  | "purple"
+  | "red"
+  | "yellow";
 
-// ---------- Types ----------
+// ✅ Balloon images
+export const balloonImages: Record<BalloonColor, any> = {
+  blue: require("@assets/balloons/balloon-blue.png"),
+  green: require("@assets/balloons/balloon-green.png"),
+  orange: require("@assets/balloons/balloon-orange.png"),
+  pink: require("@assets/balloons/balloon-pink.png"),
+  purple: require("@assets/balloons/balloon-purple.png"),
+  red: require("@assets/balloons/balloon-red.png"),
+  yellow: require("@assets/balloons/balloon-yellow.png"),
+};
+
+// ✅ Clouds
+export const cloudImages: any[] = [
+  require("@assets/clouds/cloud-1.png"),
+  require("@assets/clouds/cloud-2.png"),
+  require("@assets/clouds/cloud-3.png"),
+];
+
+// ✅ Pop + Slash sounds
+export const popSounds: any[] = [
+  require("@assets/sounds/balloon-pop-1.mp3"),
+  require("@assets/sounds/balloon-pop-2.mp3"),
+  require("@assets/sounds/balloon-pop-3.mp3"),
+  require("@assets/sounds/balloon-pop-4.mp3"),
+  require("@assets/sounds/balloon-pop-5.mp3"),
+  require("@assets/sounds/balloon-pop-6.mp3"),
+];
+export const slashSounds: any[] = [
+  require("@assets/sounds/sword-slash-1.mp3"),
+  require("@assets/sounds/sword-slash-2.mp3"),
+];
+
+// ---------------------------------------------------------------------------
+// 🔢 Types
+// ---------------------------------------------------------------------------
 type Balloon = {
   id: string;
   color: BalloonColor;
@@ -50,12 +98,16 @@ type Cloud = {
   speed: number;
 };
 
-// ---------- Constants ----------
+// ---------------------------------------------------------------------------
+// ⚙️ Constants
+// ---------------------------------------------------------------------------
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
 const makeId = () =>
   `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-// ---------- Component ----------
+// ---------------------------------------------------------------------------
+// 🎮 Component
+// ---------------------------------------------------------------------------
 export default function BalloonPopper() {
   const [balloons, setBalloons] = useState<Balloon[]>([]);
   const [clouds, setClouds] = useState<Cloud[]>([]);
@@ -73,7 +125,9 @@ export default function BalloonPopper() {
     []
   );
 
-  // ---------- Audio setup ----------
+  // -------------------------------------------------------------------------
+  // 🔊 Audio setup
+  // -------------------------------------------------------------------------
   useEffect(() => {
     let mounted = true;
     (async () => {
@@ -87,12 +141,12 @@ export default function BalloonPopper() {
       });
 
       const pops = await Promise.all(
-        popSounds.map((src: any) =>
+        popSounds.map((src) =>
           Audio.Sound.createAsync(src, { shouldPlay: false })
         )
       );
       const slashes = await Promise.all(
-        slashSounds.map((src: any) =>
+        slashSounds.map((src) =>
           Audio.Sound.createAsync(src, { shouldPlay: false })
         )
       );
@@ -128,7 +182,9 @@ export default function BalloonPopper() {
     } catch {}
   }, []);
 
-  // ---------- Spawning ----------
+  // -------------------------------------------------------------------------
+  // 🎈 Spawning
+  // -------------------------------------------------------------------------
   const spawnBalloon = useCallback(() => {
     const color = pick(colors);
     const size = rand(58, 110);
@@ -172,7 +228,9 @@ export default function BalloonPopper() {
     );
   }, []);
 
-  // ---------- Main Loop ----------
+  // -------------------------------------------------------------------------
+  // 🕹️ Main Loop
+  // -------------------------------------------------------------------------
   useEffect(() => {
     const loop = (ts: number) => {
       if (!lastTsRef.current) lastTsRef.current = ts;
@@ -212,7 +270,9 @@ export default function BalloonPopper() {
     };
   }, [spawnBalloon, spawnCloud]);
 
-  // ---------- Touch Handling ----------
+  // -------------------------------------------------------------------------
+  // 👆 Touch Handling
+  // -------------------------------------------------------------------------
   const handlePress = useCallback(
     (e: GestureResponderEvent) => {
       const { locationX: x, locationY: y } = e.nativeEvent;
@@ -247,11 +307,12 @@ export default function BalloonPopper() {
     [playOne]
   );
 
-  // ---------- Render ----------
+  // -------------------------------------------------------------------------
+  // 🧱 Render
+  // -------------------------------------------------------------------------
   return (
     <FullscreenWrapper>
       <View style={styles.container}>
-        {/* Background gradient */}
         <LinearGradient
           colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
           style={StyleSheet.absoluteFill}
@@ -316,7 +377,9 @@ export default function BalloonPopper() {
   );
 }
 
-// ---------- Styles ----------
+// ---------------------------------------------------------------------------
+// 💅 Styles
+// ---------------------------------------------------------------------------
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
@@ -327,7 +390,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    zIndex: 10, // ✅ keeps BackButton functional
+    zIndex: 10,
   },
   cloud: {
     position: "absolute",

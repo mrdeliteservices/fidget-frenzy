@@ -9,9 +9,23 @@ import {
   Easing,
   SafeAreaView,
 } from "react-native";
-import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import FullscreenWrapper from "../components/FullscreenWrapper"; // ✅ new import
+import FullscreenWrapper from "@components/FullscreenWrapper";
+
+// --- Safe router shim so Welcome works with or without expo-router ---
+let routerReplace: (path: string) => void = () => {};
+try {
+  // Dynamically require so it doesn't throw in web bypass mode
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const exp = require("expo-router");
+  if (typeof exp?.useRouter === "function") {
+    const r = exp.useRouter();
+    if (r?.replace) routerReplace = r.replace.bind(r);
+  }
+} catch {
+  // No expo-router available in this environment; fall back to no-op
+}
+// ---------------------------------------------------------------------
 
 const BRAND = { blue: "#0B1E3D", gold: "#FDD017" };
 
@@ -25,7 +39,6 @@ const TAGLINES = [
 const SUBLINE = "Tiny tools to calm busy hands.";
 
 export default function Welcome() {
-  const router = useRouter();
   const logoScale = useRef(new Animated.Value(0.85)).current;
   const logoOpacity = useRef(new Animated.Value(0)).current;
   const glowOpacity = useRef(new Animated.Value(0)).current;
@@ -39,8 +52,8 @@ export default function Welcome() {
 
   const goHome = React.useCallback(() => {
     Haptics.selectionAsync();
-    router.replace("/home");
-  }, [router]);
+    routerReplace("/home");
+  }, []);
 
   useEffect(() => {
     Animated.sequence([
@@ -146,7 +159,7 @@ export default function Welcome() {
               ]}
             />
             <Animated.Image
-              source={require("../assets/brand/fidget-frenzy-logo.png")}
+              source={require("@assets/brand/fidget-frenzy-logo.png")}
               style={[
                 styles.logo,
                 { opacity: logoOpacity, transform: [{ scale: logoScale }] },

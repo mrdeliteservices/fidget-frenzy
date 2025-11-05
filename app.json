@@ -2,7 +2,6 @@
   "expo": {
     "name": "fidget-frenzy",
     "slug": "fidget-frenzy",
-    "entryPoint": "./entry.js",
     "scheme": "fidgetfrenzy",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -15,7 +14,11 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.fidgetfrenzy",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -35,6 +38,22 @@
           "origin": false
         }
       ]
-    ]
+    ],
+    "platforms": [
+      "ios",
+      "android",
+      "web"
+    ],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "88d0f3ef-38fd-46fe-a6c6-3651f65e6668"
+      }
+    }
   }
 }

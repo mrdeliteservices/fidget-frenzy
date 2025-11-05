@@ -9,8 +9,8 @@ import {
   SafeAreaView,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import FullscreenWrapper from "../../components/FullscreenWrapper";
-import BackButton from "../../components/BackButton"; // ✅ unified navigation button
+import FullscreenWrapper from "@components/FullscreenWrapper";
+import BackButton from "@components/BackButton"; // ✅ unified navigation button
 
 const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
 
@@ -69,12 +69,12 @@ export default function Gears() {
         <View style={styles.center}>
           <View style={styles.gearRow}>
             <Animated.Image
-              source={require("../../assets/icons/gears.png")}
+              source={require("@assets/icons/gears.png")}
               style={[styles.gear, { transform: [{ rotate: rotA }] }]}
               resizeMode="contain"
             />
             <Animated.Image
-              source={require("../../assets/icons/gears.png")}
+              source={require("@assets/icons/gears.png")}
               style={[styles.gearSmall, { transform: [{ rotate: rotB }] }]}
               resizeMode="contain"
             />

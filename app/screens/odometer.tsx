@@ -8,8 +8,8 @@ import {
   SafeAreaView,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import FullscreenWrapper from "../../components/FullscreenWrapper";
-import BackButton from "../../components/BackButton"; // ✅ unified navigation
+import FullscreenWrapper from "@components/FullscreenWrapper";
+import BackButton from "@components/BackButton"; // ✅ unified navigation
 
 const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
 

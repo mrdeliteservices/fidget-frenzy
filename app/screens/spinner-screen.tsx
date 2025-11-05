@@ -14,9 +14,9 @@ import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 
-import BackButton from "../../components/BackButton";
-import FullscreenWrapper from "../../components/FullscreenWrapper";
-import SettingsModal from "../../components/SettingsModal";
+import BackButton from "@components/BackButton";
+import FullscreenWrapper from "@components/FullscreenWrapper";
+import SettingsModal from "@components/SettingsModal";
 
 // ---------- Config ----------
 const CONFIG = {
@@ -73,7 +73,7 @@ export default function SpinnerScreen() {
     (async () => {
       try {
         const { sound } = await Audio.Sound.createAsync(
-          require("../../assets/sounds/whoosh-sound-effect-240257.mp3"),
+          require("@assets/sounds/whoosh-sound-effect-240257.mp3"),
           { isLooping: false, volume: 1.0 }
         );
         if (!cancelled) whooshRef.current = sound;

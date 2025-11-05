@@ -4,6 +4,7 @@
 // - Cord + cap move together (Cap Drop), Cord Extra only extends white piece
 // - Beam begins under rim; unaffected by cord tuning
 // - Dev Menu only if DEBUG = true
+// - Uses unified sound manager in /utils to prevent first-load crashes
 
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -19,7 +20,6 @@ import {
   Modal,
 } from "react-native";
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
 import Svg, {
   Path,
   Rect,
@@ -33,9 +33,10 @@ import Svg, {
   Line,
 } from "react-native-svg";
 
-import FullscreenWrapper from "../../components/FullscreenWrapper";
-import BackButton from "../../components/BackButton";
-import SettingsModal from "../../components/SettingsModal";
+import FullscreenWrapper from "@components/FullscreenWrapper";
+import BackButton from "@components/BackButton";
+import SettingsModal from "@components/SettingsModal";
+import { playSound } from "@utils/soundManager"; // ✅ unified, crash-safe audio
 
 const { width: W, height: H } = Dimensions.get("window");
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -70,36 +71,16 @@ export default function SliderSwitch() {
   const a = useRef(new Animated.Value(0)).current;
   const animatingRef = useRef(false);
 
-  // --------- AUDIO: lazy-load on first use (avoids startup crash) ----------
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const soundLoadedRef = useRef(false);
-  const ensureSound = async () => {
-    if (soundLoadedRef.current) return;
-    try {
-      const { sound } = await Audio.Sound.createAsync(
-        require("../../assets/sounds/switch-click.mp3"),
-        { shouldPlay: false }
-      );
-      soundRef.current = sound;
-      soundLoadedRef.current = true;
-    } catch {}
-  };
+  // ✅ Unified audio call (preloaded & safe)
   const playClick = async () => {
     if (!soundOn) return;
-    try {
-      if (!soundLoadedRef.current) await ensureSound();
-      const s = soundRef.current;
-      if (!s) return;
-      await s.stopAsync().catch(() => {});
-      await s.setPositionAsync(0).catch(() => {});
-      await s.playAsync().catch(() => {});
-    } catch {}
+    await playSound("switch-click");
   };
 
   // ================== TUNABLES (Dev Menu) ==================
   // Dome geometry
-  const [domeTopY, setDomeTopY] = useState(8);   // top of curve
-  const [rimY, setRimY] = useState(120);          // bottom of shade (your latest)
+  const [domeTopY, setDomeTopY] = useState(8); // top of curve
+  const [rimY, setRimY] = useState(120); // bottom of shade
   const [rimLeftPct, setRimLeftPct] = useState(0.22);
   const [rimRightPct, setRimRightPct] = useState(0.78);
   const [rimInnerInset, setRimInnerInset] = useState(8);
@@ -138,10 +119,9 @@ export default function SliderSwitch() {
     // White cord runs from *under* ceiling to the cap top (LAMP_GROUP_TOP + capDrop) plus any extra
     const cordHeight = Math.max(
       8,
-      (LAMP_GROUP_TOP - (CEILING_H + CEILING_MARGIN_B)) + capDrop + cordExtra
+      LAMP_GROUP_TOP - (CEILING_H + CEILING_MARGIN_B) + capDrop + cordExtra
     );
 
-    // pool geometry
     return {
       domeW,
       rimY,
@@ -182,17 +162,25 @@ export default function SliderSwitch() {
   const toggle = async () => {
     if (animatingRef.current) return;
     animatingRef.current = true;
+
     const next = !isOn;
     setIsOn(next);
     setCount((c) => c + 1);
-    try { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+
     await playClick();
+
     Animated.timing(a, {
       toValue: next ? 1 : 0,
       duration: 420,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
-    }).start(() => (animatingRef.current = false));
+    }).start(() => {
+      animatingRef.current = false;
+    });
   };
 
   const reset = () => {
@@ -224,7 +212,9 @@ export default function SliderSwitch() {
           {/* Header */}
           <View style={styles.topBar}>
             <BackButton />
-            <View style={styles.counterPill}><Text style={styles.counterTxt}>{count}</Text></View>
+            <View style={styles.counterPill}>
+              <Text style={styles.counterTxt}>{count}</Text>
+            </View>
             <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.settingsBtn}>
               <Text style={styles.settingsGlyph}>⚙️</Text>
             </TouchableOpacity>
@@ -287,10 +277,24 @@ export default function SliderSwitch() {
                 <Path d={conePath} fill="url(#beamFadeY)" />
                 {debugOverlay && (
                   <>
-                    <Line x1={(L.bottomW - L.topW) / 2} y1={0} x2={L.bottomW / 2} y2={L.coneH}
-                      stroke="lime" strokeDasharray="4,3" strokeWidth={1} />
-                    <Line x1={(L.bottomW + L.topW) / 2} y1={0} x2={L.bottomW / 2} y2={L.coneH}
-                      stroke="lime" strokeDasharray="4,3" strokeWidth={1} />
+                    <Line
+                      x1={(L.bottomW - L.topW) / 2}
+                      y1={0}
+                      x2={L.bottomW / 2}
+                      y2={L.coneH}
+                      stroke="lime"
+                      strokeDasharray="4,3"
+                      strokeWidth={1}
+                    />
+                    <Line
+                      x1={(L.bottomW + L.topW) / 2}
+                      y1={0}
+                      x2={L.bottomW / 2}
+                      y2={L.coneH}
+                      stroke="lime"
+                      strokeDasharray="4,3"
+                      strokeWidth={1}
+                    />
                   </>
                 )}
               </Svg>
@@ -300,7 +304,9 @@ export default function SliderSwitch() {
             <View style={{ position: "absolute", top: capDrop, left: 0, right: 0, alignItems: "center" }}>
               <Svg width={L.domeW} height={Math.max(240, rimY + 40)}>
                 <Defs>
-                  <ClipPath id="belowRim"><Rect x="0" y={rimY} width={L.domeW} height={H} /></ClipPath>
+                  <ClipPath id="belowRim">
+                    <Rect x="0" y={rimY} width={L.domeW} height={H} />
+                  </ClipPath>
                 </Defs>
 
                 {/* Bulb (only below rim) */}
@@ -318,9 +324,11 @@ export default function SliderSwitch() {
                     strokeWidth={1.4}
                   />
                   <AnimatedPath
-                    d={`M ${L.domeW / 2 - 9} ${rimY - 22}
-                        Q ${L.domeW / 2 - 4} ${rimY - 14} ${L.domeW / 2} ${rimY - 10}
-                        Q ${L.domeW / 2 + 4} ${rimY - 14} ${L.domeW / 2 + 9} ${rimY - 22}`}
+                    d={`
+                      M ${L.domeW / 2 - 9} ${rimY - 22}
+                      Q ${L.domeW / 2 - 4} ${rimY - 14} ${L.domeW / 2} ${rimY - 10}
+                      Q ${L.domeW / 2 + 4} ${rimY - 14} ${L.domeW / 2 + 9} ${rimY - 22}
+                    `}
                     stroke={COLOR.filament}
                     strokeWidth={2.8}
                     strokeLinecap="round"
@@ -340,7 +348,10 @@ export default function SliderSwitch() {
                   <Path
                     d={`M ${L.domeW * rimLeftPct} ${rimY}
                        Q ${L.domeW / 2} ${domeTopY} ${L.domeW * rimRightPct} ${rimY}`}
-                    stroke="cyan" strokeDasharray="6,4" strokeWidth={1} fill="none"
+                    stroke="cyan"
+                    strokeDasharray="6,4"
+                    strokeWidth={1}
+                    fill="none"
                   />
                 )}
               </Svg>
@@ -354,10 +365,12 @@ export default function SliderSwitch() {
               position: "absolute",
               top:
                 CEILING_H + CEILING_MARGIN_B + // from top to under ceiling
-                L.cordHeight +                 // through the entire cord
+                L.cordHeight + // through the entire cord
                 (L.LAMP_GROUP_TOP - (CEILING_H + CEILING_MARGIN_B)) + // to lamp group top
-                rimY + beamOffset + L.coneH +  // to end of cone
-                POOL_RAISE,                    // final user raise
+                rimY +
+                beamOffset +
+                L.coneH + // to end of cone
+                POOL_RAISE, // final user raise
               left: "50%",
               transform: [{ translateX: -(W * L.POOL_WIDTH_FACTOR) / 2 }],
               opacity: coneOpacity,
@@ -457,30 +470,87 @@ export default function SliderSwitch() {
               <Text style={{ color: "#111", fontWeight: "700" }}>⚙️</Text>
             </TouchableOpacity>
 
-            <Modal transparent visible={debugOpen} animationType="fade" onRequestClose={() => setDebugOpen(false)}>
+            <Modal
+              transparent
+              visible={debugOpen}
+              animationType="fade"
+              onRequestClose={() => setDebugOpen(false)}
+            >
               <View style={styles.devModalBackdrop}>
                 <View style={styles.devModal}>
                   <View style={styles.devHeader}>
                     <Text style={styles.devTitle}>Developer Tuning</Text>
                     <TouchableOpacity onPress={() => setDebugOverlay((v) => !v)}>
-                      <Text style={styles.devToggle}>{debugOverlay ? "Overlay: ON" : "Overlay: OFF"}</Text>
+                      <Text style={styles.devToggle}>
+                        {debugOverlay ? "Overlay: ON" : "Overlay: OFF"}
+                      </Text>
                     </TouchableOpacity>
                   </View>
 
                   {row("Dome Top Y", domeTopY, () => setDomeTopY((v) => v - 2), () => setDomeTopY((v) => v + 2))}
                   {row("Rim Y", rimY, () => setRimY((v) => v - 2), () => setRimY((v) => v + 2))}
-                  {row("Rim Left %", rimLeftPct, () => setRimLeftPct((v) => Math.max(0.05, +(v - 0.02).toFixed(2))), () => setRimLeftPct((v) => Math.min(0.45, +(v + 0.02).toFixed(2))))}
-                  {row("Rim Right %", rimRightPct, () => setRimRightPct((v) => Math.max(0.55, +(v - 0.02).toFixed(2))), () => setRimRightPct((v) => Math.min(0.95, +(v + 0.02).toFixed(2))))}
-                  {row("Rim Inset", rimInnerInset, () => setRimInnerInset((v) => Math.max(0, v - 1)), () => setRimInnerInset((v) => v + 1))}
-                  {row("Beam Offset", beamOffset, () => setBeamOffset((v) => Math.max(0, v - 4)), () => setBeamOffset((v) => v + 4))}
+                  {row(
+                    "Rim Left %",
+                    rimLeftPct,
+                    () => setRimLeftPct((v) => Math.max(0.05, +(v - 0.02).toFixed(2))),
+                    () => setRimLeftPct((v) => Math.min(0.45, +(v + 0.02).toFixed(2)))
+                  )}
+                  {row(
+                    "Rim Right %",
+                    rimRightPct,
+                    () => setRimRightPct((v) => Math.max(0.55, +(v - 0.02).toFixed(2))),
+                    () => setRimRightPct((v) => Math.min(0.95, +(v + 0.02).toFixed(2)))
+                  )}
+                  {row(
+                    "Rim Inset",
+                    rimInnerInset,
+                    () => setRimInnerInset((v) => Math.max(0, v - 1)),
+                    () => setRimInnerInset((v) => v + 1)
+                  )}
+                  {row(
+                    "Beam Offset",
+                    beamOffset,
+                    () => setBeamOffset((v) => Math.max(0, v - 4)),
+                    () => setBeamOffset((v) => v + 4)
+                  )}
 
-                  {row("Cap Drop", capDrop, () => setCapDrop((v) => Math.max(0, v - 2)), () => setCapDrop((v) => v + 2))}
-                  {row("Cord Extra", cordExtra, () => setCordExtra((v) => Math.max(0, v - 2)), () => setCordExtra((v) => v + 2))}
+                  {row(
+                    "Cap Drop",
+                    capDrop,
+                    () => setCapDrop((v) => Math.max(0, v - 2)),
+                    () => setCapDrop((v) => v + 2)
+                  )}
+                  {row(
+                    "Cord Extra",
+                    cordExtra,
+                    () => setCordExtra((v) => Math.max(0, v - 2)),
+                    () => setCordExtra((v) => v + 2)
+                  )}
 
-                  {row("Pool Width", POOL_WIDTH_FACTOR, () => setPOOL_WIDTH_FACTOR((v) => +(Math.max(0.6, v - 0.02)).toFixed(2)), () => setPOOL_WIDTH_FACTOR((v) => +(Math.min(1.0, v + 0.02)).toFixed(2)))}
-                  {row("Pool RX", POOL_RX_FACTOR, () => setPOOL_RX_FACTOR((v) => +(Math.max(0.20, v - 0.02)).toFixed(2)), () => setPOOL_RX_FACTOR((v) => +(Math.min(0.60, v + 0.02)).toFixed(2)))}
-                  {row("Pool RY", POOL_RY, () => setPOOL_RY((v) => Math.max(16, v - 2)), () => setPOOL_RY((v) => Math.min(64, v + 2)))}
-                  {row("Pool Raise", POOL_RAISE, () => setPOOL_RAISE((v) => v - 4), () => setPOOL_RAISE((v) => v + 4))}
+                  {row(
+                    "Pool Width",
+                    POOL_WIDTH_FACTOR,
+                    () => setPOOL_WIDTH_FACTOR((v) => +(Math.max(0.6, v - 0.02)).toFixed(2)),
+                    () => setPOOL_WIDTH_FACTOR((v) => +(Math.min(1.0, v + 0.02)).toFixed(2))
+                  )}
+                  {row(
+                    "Pool RX",
+                    POOL_RX_FACTOR,
+                    () => setPOOL_RX_FACTOR((v) => +(Math.max(0.2, v - 0.02)).toFixed(2)),
+                    () => setPOOL_RX_FACTOR((v) => +(Math.min(0.6, v + 0.02)).toFixed(2))
+                  )}
+                  {row(
+                    "Pool RY",
+                    POOL_RY,
+                    () => setPOOL_RY((v) => Math.max(16, v - 2)),
+                    () => setPOOL_RY((v) => Math.min(64, v + 2))
+                  )}
+                  {row(
+                    "Pool Raise",
+                    POOL_RAISE,
+                    () => setPOOL_RAISE((v) => v - 4),
+                    () => setPOOL_RAISE((v) => v + 4)
+                  )}
 
                   <View style={styles.devFooter}>
                     <TouchableOpacity style={styles.devBtn} onPress={() => setDebugOpen(false)}>
@@ -503,7 +573,9 @@ export default function SliderSwitch() {
                         setPOOL_RAISE(-276);
                       }}
                     >
-                      <Text style={[styles.devBtnTxt, { color: "#141414" }]}>Reset to Preset</Text>
+                      <Text style={[styles.devBtnTxt, { color: "#141414" }]}>
+                        Reset to Preset
+                      </Text>
                     </TouchableOpacity>
                   </View>
                 </View>
@@ -517,18 +589,17 @@ export default function SliderSwitch() {
 }
 
 /* ---------- Dev Menu row helper ---------- */
-function row(
-  label: string,
-  value: number,
-  dec: () => void,
-  inc: () => void
-) {
+function row(label: string, value: number, dec: () => void, inc: () => void) {
   return (
     <View style={devStyles.row} key={label}>
       <Text style={devStyles.rowLabel}>{label}</Text>
-      <TouchableOpacity onPress={dec} style={devStyles.stepBtn}><Text style={devStyles.stepTxt}>–</Text></TouchableOpacity>
+      <TouchableOpacity onPress={dec} style={devStyles.stepBtn}>
+        <Text style={devStyles.stepTxt}>–</Text>
+      </TouchableOpacity>
       <Text style={devStyles.rowVal}>{String(value)}</Text>
-      <TouchableOpacity onPress={inc} style={devStyles.stepBtn}><Text style={devStyles.stepTxt}>+</Text></TouchableOpacity>
+      <TouchableOpacity onPress={inc} style={devStyles.stepBtn}>
+        <Text style={devStyles.stepTxt}>+</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -579,7 +650,10 @@ const styles = StyleSheet.create({
 
   switchAnchor: {
     position: "absolute",
-    left: 0, right: 0, bottom: 18, alignItems: "center",
+    left: 0,
+    right: 0,
+    bottom: 18,
+    alignItems: "center",
   },
   switchWrap: { width: "100%", alignItems: "center" },
 
@@ -602,21 +676,31 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 14,
     bottom: 84,
-    width: 36, height: 36, borderRadius: 18,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: "#FFD458",
-    alignItems: "center", justifyContent: "center",
-    shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
     shadowOffset: { width: 0, height: 2 },
   },
   devModalBackdrop: {
-    flex: 1, backgroundColor: "rgba(0,0,0,0.45)",
-    alignItems: "center", justifyContent: "center",
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.45)",
+    alignItems: "center",
+    justifyContent: "center",
   },
   devModal: {
-    width: "92%", maxWidth: 540,
+    width: "92%",
+    maxWidth: 540,
     backgroundColor: "#0E1C36",
-    borderRadius: 14, padding: 14,
-    borderWidth: 1, borderColor: "rgba(255,255,255,0.08)",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
   },
   devHeader: {
     flexDirection: "row",
@@ -646,9 +730,12 @@ const devStyles = StyleSheet.create({
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 6 },
   rowLabel: { color: "#fff", width: 140, fontSize: 13, opacity: 0.9 },
   stepBtn: {
-    width: 30, height: 28, borderRadius: 6,
+    width: 30,
+    height: 28,
+    borderRadius: 6,
     backgroundColor: "#223357",
-    alignItems: "center", justifyContent: "center",
+    alignItems: "center",
+    justifyContent: "center",
     marginHorizontal: 6,
   },
   stepTxt: { color: "#fff", fontSize: 18, fontWeight: "800" },

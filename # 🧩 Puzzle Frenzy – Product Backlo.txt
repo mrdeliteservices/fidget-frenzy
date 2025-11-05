@@ -1,0 +1,14 @@
+# 🧩 Puzzle Frenzy – Product Backlog (Expanded)
+
+| # | Game Title | Type / Genre | Core Concept | Avg Play Time | Status | Effort | Priority | Target Release | Monetization Mode | Dependencies / Notes |
+|---|-------------|---------------|---------------|----------------|---------|---------|-----------|------------------|----------------------|
+| 1 | **Word Warp** | Word Logic | Transform one word into another by changing one letter per move; each intermediate word must be real. | 3–7 min | ✅ Approved | M | ⭐⭐⭐⭐ | v0.2 (MVP launch) | Free + Pro (archive + timed) | Dictionary API + word validator engine |
+| 2 | **Sudoku** | Number Logic | Fill 9×9 grid so each row, column, and 3×3 box contains 1–9 once. | 5–10 min | 🔹 Planned | L | ⭐⭐⭐⭐ | v0.4 | Free + Pro (custom themes) | Grid generator + hint system |
+| 3 | **KenKen** | Math Logic | Solve math cages with target totals using + − × ÷ operations. | 5–10 min | 🔹 Planned | L | ⭐⭐⭐ | v0.5 | Pro Only | Arithmetic grid generator (extend Sudoku base) |
+| 4 | **Pipes** | Visual Logic / Flow | Connect colored pipes from source → sink without crossing paths. | 4–8 min | 🔹 Concept | M | ⭐⭐⭐ | v0.3 | Free + Pro (archive packs) | Flow path logic + drag controls |
+| 5 | **King’s Kingdom** | Spatial / Logic | Divide grid into “kingdoms”; place 1 king per kingdom (no row/column duplicates). | 6–10 min | ✅ Approved | L | ⭐⭐⭐⭐⭐ | v0.2 (MVP launch) | Free + Pro (hard grids + archive) | Grid generator + constraint solver |
+| 6 | **Pattern Play** | Pattern Recognition | Identify and continue visual or numerical sequences. | 3–6 min | 🔹 In Design | M | ⭐⭐⭐ | v0.2 (MVP launch) | Free + Pro (daily archive) | Pattern engine + shared graphics |
+| 7 | **Logic Locks** | Deduction / Micro Grid | Fill small 4×4–5×5 grids using logic clues. | 5–8 min | 🔹 Concept | M | ⭐⭐⭐ | v0.5 | Pro Only | Logic parser + clue engine |
+| 8 | **Memory Match** | Memory / Visual | Flip tiles to find pairs. | 2–5 min | 🔹 Concept | S | ⭐⭐ | v0.3 | Free Only | Simple animation + timer |
+| 9 | **Number Nudge** | Math / Number | Mini math challenges (4×4 Sudoku-lite or equation paths). | 5–8 min | 🔹 Concept | M | ⭐⭐⭐ | v0.4 | Free + Pro (archive packs) | Arithmetic solver shared with KenKen |
+| 10 | **Visual Trickery** | Visual Perception | Spot-the-difference / symmetry puzzles / illusions. | 3–6 min | 🔹 Concept | M | ⭐⭐ | v0.4 | Free Only | Image assets + hint overlay |

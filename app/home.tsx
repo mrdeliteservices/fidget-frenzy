@@ -19,8 +19,8 @@ import Animated, {
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, router } from "expo-router";
 import * as Haptics from "expo-haptics";
-import { GlobalSoundManager } from "../lib/soundManager";
-import FullscreenWrapper from "../components/FullscreenWrapper";
+import { GlobalSoundManager } from "@utils/soundManager";
+import FullscreenWrapper from "@components/FullscreenWrapper";
 
 const { width } = Dimensions.get("window");
 const CARD_WIDTH = width * 0.58;
@@ -34,12 +34,12 @@ const BRAND = {
 };
 
 const fidgets = [
-  { id: "1", name: "Fidget Spinner", route: "/screens/spinner-screen", icon: require("../assets/icons/spinner.png") },
-  { id: "2", name: "Balloon Popper", route: "/screens/balloon-popper", icon: require("../assets/icons/balloon.png") },
-  { id: "3", name: "Stress Ball", route: "/screens/stress-ball", icon: require("../assets/icons/stressball.png") },
-  { id: "4", name: "Slider Switch", route: "/screens/slider-switch", icon: require("../assets/icons/slider.png") },
-  { id: "5", name: "Odometer", route: "/screens/odometer", icon: require("../assets/icons/odometer.png") },
-  { id: "6", name: "Gears", route: "/screens/gears", icon: require("../assets/icons/gears.png") },
+  { id: "1", name: "Fidget Spinner", route: "/screens/spinner-screen", icon: require("@assets/icons/spinner.png") },
+  { id: "2", name: "Balloon Popper", route: "/screens/balloon-popper", icon: require("@assets/icons/balloon.png") },
+  { id: "3", name: "Stress Ball", route: "/screens/stress-ball", icon: require("@assets/icons/stressball.png") },
+  { id: "4", name: "Slider Switch", route: "/screens/slider-switch", icon: require("@assets/icons/slider.png") },
+  { id: "5", name: "Odometer", route: "/screens/odometer", icon: require("@assets/icons/odometer.png") },
+  { id: "6", name: "Gears", route: "/screens/gears", icon: require("@assets/icons/gears.png") },
 ];
 
 // ---------- Subcomponent for each card ----------
