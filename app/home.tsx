@@ -1,4 +1,9 @@
-import React, { useEffect, useRef, useState } from "react";
+// app/home.tsx
+// Fidget Frenzy — Home Screen (v0.9-dev CLEAN)
+// Removed all debug logs + removed React interval polling
+// Restored smooth Reanimated progress dots
+
+import React, { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -6,7 +11,6 @@ import {
   StyleSheet,
   TouchableOpacity,
   Image,
-  SafeAreaView,
 } from "react-native";
 import Animated, {
   useSharedValue,
@@ -19,6 +23,7 @@ import Animated, {
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, router } from "expo-router";
 import * as Haptics from "expo-haptics";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { GlobalSoundManager } from "../lib/soundManager";
 import FullscreenWrapper from "../components/FullscreenWrapper";
 
@@ -42,7 +47,7 @@ const fidgets = [
   { id: "6", name: "Gears", route: "/screens/gears", icon: require("../assets/icons/gears.png") },
 ];
 
-// ---------- Subcomponent for each card ----------
+// ---------------- CARD ----------------
 function FidgetCard({ item, index, scrollX, onPress }: any) {
   const animatedStyle = useAnimatedStyle(() => {
     const inputRange = [
@@ -82,31 +87,25 @@ function FidgetCard({ item, index, scrollX, onPress }: any) {
   );
 }
 
+// ---------------- MAIN ----------------
 export default function Home() {
   const routerHook = useRouter();
   const scrollX = useSharedValue(0);
-  const [lastTap, setLastTap] = useState(0);
+  const lastTap = useSharedValue(0);
 
-  // ✅ Type-safe useEffect (no async return)
+  // Prefetch silently
   useEffect(() => {
-    const prefetchRoutes = async () => {
-      try {
-        await Promise.all([
-          router.prefetch("/screens/spinner-screen"),
-          router.prefetch("/screens/balloon-popper"),
-          router.prefetch("/screens/stress-ball"),
-          router.prefetch("/screens/slider-switch"),
-          router.prefetch("/screens/odometer"),
-          router.prefetch("/screens/gears"),
-        ]);
-      } catch (err) {
-        console.warn("Prefetch failed:", err);
-      }
-    };
+    (async () => {
+      await Promise.allSettled([
+        router.prefetch("/screens/spinner-screen"),
+        router.prefetch("/screens/balloon-popper"),
+        router.prefetch("/screens/stress-ball"),
+        router.prefetch("/screens/slider-switch"),
+        router.prefetch("/screens/odometer"),
+        router.prefetch("/screens/gears"),
+      ]);
+    })();
 
-    prefetchRoutes();
-
-    // Cleanup on unmount
     return () => {
       GlobalSoundManager.stopAll();
     };
@@ -118,10 +117,13 @@ export default function Home() {
     },
   });
 
-  const handleTap = async (route: string, index: number) => {
+  // Smooth progress for dots
+  const progress = useDerivedValue(() => scrollX.value / ITEM_INTERVAL);
+
+  const handleTap = async (route: string) => {
     const now = Date.now();
-    if (now - lastTap < 250) return; // debounce
-    setLastTap(now);
+    if (now - lastTap.value < 250) return;
+    lastTap.value = now;
 
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -130,9 +132,6 @@ export default function Home() {
     GlobalSoundManager.stopAll();
     routerHook.push(route);
   };
-
-  // derive progress for dots (UI-thread)
-  const progress = useDerivedValue(() => scrollX.value / ITEM_INTERVAL);
 
   return (
     <FullscreenWrapper>
@@ -144,11 +143,13 @@ export default function Home() {
           style={StyleSheet.absoluteFill}
         />
 
+        {/* Header */}
         <View style={styles.headerWrap}>
           <Text style={styles.title}>FIDGET FRENZY</Text>
           <View style={styles.titleLine} />
         </View>
 
+        {/* Carousel */}
         <Animated.FlatList
           data={fidgets}
           keyExtractor={(item) => item.id}
@@ -162,28 +163,27 @@ export default function Home() {
             alignItems: "center",
           }}
           onScroll={onScroll}
-          scrollEventThrottle={1}
+          scrollEventThrottle={16}
           renderItem={({ item, index }) => (
             <FidgetCard
               item={item}
               index={index}
               scrollX={scrollX}
-              onPress={() => handleTap(item.route, index)}
+              onPress={() => handleTap(item.route)}
             />
           )}
         />
 
-        {/* Animated Dots perfectly synced with scroll */}
+        {/* Dots */}
         <View style={styles.dotsWrap}>
           {fidgets.map((_, i) => {
             const animatedDot = useAnimatedStyle(() => {
               const diff = Math.abs(progress.value - i);
-              const scale = interpolate(diff, [0, 1], [1.6, 1], Extrapolate.CLAMP);
-              const opacity = interpolate(diff, [0, 1], [1, 0.4], Extrapolate.CLAMP);
               return {
-                transform: [{ scale }],
-                opacity,
-                backgroundColor: diff < 0.3 ? BRAND.gold : "rgba(255,255,255,0.4)",
+                transform: [{ scale: interpolate(diff, [0, 1], [1.6, 1]) }],
+                opacity: interpolate(diff, [0, 1], [1, 0.4]),
+                backgroundColor:
+                  diff < 0.3 ? BRAND.gold : "rgba(255,255,255,0.4)",
               };
             });
             return <Animated.View key={i} style={[styles.dot, animatedDot]} />;
@@ -194,6 +194,7 @@ export default function Home() {
   );
 }
 
+// ---------------- STYLES ----------------
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   headerWrap: { paddingTop: 8, paddingBottom: 12 },

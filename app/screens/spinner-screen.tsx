@@ -1,4 +1,7 @@
 // app/screens/spinner-screen.tsx
+// Fidget Frenzy – Spinner Screen (v0.8-dev behavior, updated asset name)
+// Physics & interaction logic preserved exactly; audio mapped to whoosh-1.mp3
+
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
@@ -36,17 +39,17 @@ const BRAND = { blue: "#0B1E3D", gold: "#FDD017", silver: "#C0C0C0" };
 
 export default function SpinnerScreen() {
   // motion state
-  const angle = useSharedValue(0);                 // total rotation (deg), continuous/unbounded
-  const omega = useSharedValue(0);                 // angular velocity (deg/s)
-  const lastCountAt = useSharedValue(0);           // last angle at which we incremented count (deg)
+  const angle = useSharedValue(0); // total rotation (deg), continuous/unbounded
+  const omega = useSharedValue(0); // angular velocity (deg/s)
+  const lastCountAt = useSharedValue(0); // last angle at which we incremented count (deg)
   const centerX = useSharedValue(0);
   const centerY = useSharedValue(0);
-  const dragStartRotation = useSharedValue(0);     // angle at drag begin
+  const dragStartRotation = useSharedValue(0); // angle at drag begin
   const isDragging = useSharedValue(false);
 
-  // NEW: unwrap support for dragging
-  const prevDragAngle = useSharedValue(0);         // previous raw atan2 (rad)
-  const cumulativeDragDelta = useSharedValue(0);   // accumulated drag delta (deg, continuous)
+  // unwrap support for dragging
+  const prevDragAngle = useSharedValue(0); // previous raw atan2 (rad)
+  const cumulativeDragDelta = useSharedValue(0); // accumulated drag delta (deg, continuous)
 
   const bodyRef = useRef<View>(null);
 
@@ -73,13 +76,20 @@ export default function SpinnerScreen() {
     (async () => {
       try {
         const { sound } = await Audio.Sound.createAsync(
-          require("../../assets/sounds/whoosh-sound-effect-240257.mp3"),
+          // 🔁 Updated to your current asset name
+          require("../../assets/sounds/whoosh-1.mp3"),
           { isLooping: false, volume: 1.0 }
         );
-        if (!cancelled) whooshRef.current = sound;
-        else await sound.unloadAsync();
-      } catch {}
+        if (!cancelled) {
+          whooshRef.current = sound;
+        } else {
+          await sound.unloadAsync();
+        }
+      } catch {
+        // silent fail, avoids crashing spinner
+      }
     })();
+
     return () => {
       cancelled = true;
       whooshRef.current?.unloadAsync().catch(() => {});
@@ -91,6 +101,7 @@ export default function SpinnerScreen() {
     if (!mountedRef.current || !soundOn) return;
     const snd = whooshRef.current;
     if (!snd || whooshPlaying.current) return;
+
     try {
       const st = await snd.getStatusAsync();
       if ("isPlaying" in st && st.isPlaying) return;

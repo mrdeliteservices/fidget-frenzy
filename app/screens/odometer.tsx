@@ -1,153 +1,174 @@
-import React, { useRef, useState } from "react";
-import {
-  View,
-  Text,
-  StyleSheet,
-  Animated,
-  TouchableOpacity,
-  SafeAreaView,
-} from "react-native";
+// Fidget Frenzy – Odometer v0.9-dev unified
+// Integrates soundManager + SettingsModal + Ionicons gear icon + cleaned types
+
+import React, { useEffect, useState } from "react";
+import { View, Image, Text, StyleSheet, Dimensions, Pressable } from "react-native";
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  Easing,
+  runOnJS,
+} from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
+import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
+
 import FullscreenWrapper from "../../components/FullscreenWrapper";
-import BackButton from "../../components/BackButton"; // ✅ unified navigation
+import BackButton from "../../components/BackButton";
+import SettingsModal from "../../components/SettingsModal";
+import { playSound, preloadSounds } from "../../lib/soundManager";
 
-const BRAND = { blue: "#0B1E3D", purple: "#A249C0", gold: "#FDD017" };
+const { width: W, height: H } = Dimensions.get("window");
 
-type Setter = React.Dispatch<React.SetStateAction<number>>;
+export default function OdometerScreen() {
+  const router = useRouter();
+  const progress = useSharedValue(0);
+  const [mileage, setMileage] = useState(0);
+  const [settingsVisible, setSettingsVisible] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
 
-function Digit({
-  value,
-  onInc,
-  onDec,
-}: {
-  value: number;
-  onInc: () => void;
-  onDec: () => void;
-}) {
-  const y = useRef(new Animated.Value(0)).current;
+  // preload our sounds
+  useEffect(() => {
+    preloadSounds({
+      screech: require("../../assets/sounds/screech.mp3"),
+      "switch-click": require("../../assets/sounds/switch-click.mp3"),
+    });
+  }, []);
 
-  const bump = (dir: 1 | -1) => {
-    Animated.sequence([
-      Animated.timing(y, {
-        toValue: dir * -8,
-        duration: 120,
-        useNativeDriver: true,
-      }),
-      Animated.timing(y, {
-        toValue: 0,
-        duration: 120,
-        useNativeDriver: true,
-      }),
-    ]).start();
+  // define the track path
+  const radiusX = W * 0.35;
+  const radiusY = H * 0.18;
+  const centerX = W / 2;
+  const centerY = H * 0.35;
+
+  const animatedCarStyle = useAnimatedStyle(() => {
+    const angle = progress.value * 2 * Math.PI;
+    const x = centerX + radiusX * Math.cos(angle) - 25;
+    const y = centerY + radiusY * Math.sin(angle) - 25;
+    return {
+      transform: [
+        { translateX: x },
+        { translateY: y },
+        { rotate: `${angle + Math.PI / 2}rad` },
+      ],
+    };
+  });
+
+  // animate car continuously
+  useEffect(() => {
+    const loop = () => {
+      progress.value = withTiming(
+        1,
+        { duration: 8000, easing: Easing.linear },
+        (finished) => {
+          if (finished) {
+            runOnJS(setMileage)((prev) => prev + 1);
+            progress.value = 0;
+            runOnJS(loop)();
+          }
+        }
+      );
+    };
+    loop();
+  }, []);
+
+  // placeholder screech sound for turns
+  const playScreech = async () => {
+    if (!soundOn) return;
+    await playSound("switch-click", require("../../assets/sounds/switch-click.mp3"));
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  return (
-    <View style={styles.digitWrap}>
-      <TouchableOpacity
-        onPress={() => {
-          onInc();
-          bump(1);
-        }}
-        style={styles.arrow}
-      >
-        <Text style={styles.arrowTxt}>▲</Text>
-      </TouchableOpacity>
-
-      <Animated.View style={[styles.digit, { transform: [{ translateY: y }] }]}>
-        <Text style={styles.digitTxt}>{value}</Text>
-      </Animated.View>
-
-      <TouchableOpacity
-        onPress={() => {
-          onDec();
-          bump(-1);
-        }}
-        style={styles.arrow}
-      >
-        <Text style={styles.arrowTxt}>▼</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
-export default function Odometer() {
-  // ✅ Typed numeric state
-  const [d0, setD0] = useState<number>(0);
-  const [d1, setD1] = useState<number>(0);
-  const [d2, setD2] = useState<number>(0);
-
-  // ✅ Type-safe increment/decrement helpers
-  const inc = (setter: Setter) => {
-    try {
-      Haptics.selectionAsync();
-    } catch {}
-    setter((n: number) => (n + 1) % 10);
-  };
-
-  const dec = (setter: Setter) => {
-    try {
-      Haptics.selectionAsync();
-    } catch {}
-    setter((n: number) => (n + 9) % 10);
+  // reset odometer
+  const reset = () => {
+    setMileage(0);
   };
 
   return (
     <FullscreenWrapper>
-      <SafeAreaView style={[styles.container, { backgroundColor: BRAND.blue }]}>
-        {/* ✅ Clean BackButton only (no header or title) */}
-        <BackButton />
-
-        <View style={styles.center}>
-          <View style={styles.window}>
-            <Digit value={d2} onInc={() => inc(setD2)} onDec={() => dec(setD2)} />
-            <Digit value={d1} onInc={() => inc(setD1)} onDec={() => dec(setD1)} />
-            <Digit value={d0} onInc={() => inc(setD0)} onDec={() => dec(setD0)} />
-          </View>
-
-          <Text style={styles.valueLabel}>
-            {d2}
-            {d1}
-            {d0}
-          </Text>
-          <Text style={styles.hint}>Tap ▲ / ▼ to roll</Text>
+      <View style={[styles.container, { backgroundColor: "#081A34" }]}>
+        {/* Header */}
+        <View style={styles.topRow}>
+          <BackButton />
+          <Pressable onPress={() => setSettingsVisible(true)}>
+            <Ionicons name="settings-sharp" size={28} color="#FDD017" />
+          </Pressable>
         </View>
-      </SafeAreaView>
+
+        {/* Track */}
+        <Image
+          source={require("../../assets/odometer/track.png")}
+          style={styles.track}
+          resizeMode="contain"
+        />
+
+        {/* Animated Car */}
+        <Animated.Image
+          source={require("../../assets/odometer/car_red.png")}
+          style={[styles.car, animatedCarStyle]}
+          resizeMode="contain"
+        />
+
+        {/* Odometer Display */}
+        <View style={styles.odometerContainer}>
+          <Text style={styles.odometerValue}>
+            {mileage.toString().padStart(6, "0")}
+          </Text>
+          <Text style={styles.odometerLabel}>MILEAGE</Text>
+        </View>
+
+        {/* Settings Modal */}
+        <SettingsModal
+          visible={settingsVisible}
+          onClose={() => setSettingsVisible(false)}
+          onReset={reset}
+          soundOn={soundOn}
+          setSoundOn={setSoundOn}
+        />
+      </View>
     </FullscreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  window: {
-    flexDirection: "row",
-    backgroundColor: "rgba(0,0,0,0.25)",
-    borderRadius: 12,
-    padding: 8,
-    gap: 8,
-    borderWidth: 2,
-    borderColor: "rgba(0,0,0,0.35)",
-  },
-  digitWrap: { alignItems: "center", justifyContent: "center" },
-  arrow: { paddingVertical: 6 },
-  arrowTxt: { color: "#fff", fontSize: 16, opacity: 0.9 },
-  digit: {
-    width: 54,
-    height: 72,
-    borderRadius: 8,
+  container: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#111a2d",
-    borderWidth: 2,
-    borderColor: "#0b1220",
   },
-  digitTxt: { color: "#fff", fontSize: 40, fontWeight: "800" },
-  valueLabel: {
-    color: BRAND.gold,
-    fontSize: 22,
-    marginTop: 16,
-    fontWeight: "700",
+  topRow: {
+    position: "absolute",
+    top: 40,
+    left: 20,
+    right: 20,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    zIndex: 5,
+  },
+  track: {
+    width: W * 0.9,
+    height: H * 0.45,
+  },
+  car: {
+    position: "absolute",
+    width: 50,
+    height: 50,
+  },
+  odometerContainer: {
+    position: "absolute",
+    bottom: 100,
+    alignItems: "center",
+  },
+  odometerValue: {
+    fontSize: 36,
+    fontWeight: "bold",
+    color: "#FDD017",
     letterSpacing: 2,
   },
-  hint: { color: "rgba(255,255,255,0.7)", marginTop: 10 },
+  odometerLabel: {
+    fontSize: 14,
+    color: "#FFFFFF",
+    marginTop: 4,
+  },
 });

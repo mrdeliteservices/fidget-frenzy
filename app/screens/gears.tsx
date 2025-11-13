@@ -1,3 +1,6 @@
+// Fidget Frenzy – Gears v0.9-dev unified
+// Integrates SettingsModal, sound toggle, and Ionicons gear icon
+
 import React, { useMemo, useRef, useEffect, useState } from "react";
 import {
   View,
@@ -5,18 +8,15 @@ import {
   Dimensions,
   PanResponder,
   TouchableOpacity,
-  Image,
 } from "react-native";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-} from "react-native-reanimated";
+import Animated, { useSharedValue, useAnimatedStyle } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { Audio } from "expo-av";
+import { Ionicons } from "@expo/vector-icons";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import { playSound, preloadSounds } from "../../lib/soundManager";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -48,19 +48,12 @@ const SIZES = {
   XS: Math.min(W, H) * 0.09,
 };
 
-// ---------- Gear Item Component (SAFE) ----------
-function GearItem({ gear, velocity, onClick }: any) {
+// ---------- Gear Item ----------
+function GearItem({ gear }: any) {
   const rot = useSharedValue(0);
-
   const style = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rot.value}deg` }],
   }));
-
-  // Attach animation to shared velocity if gold
-  useEffect(() => {
-    if (gear.id === "gold") return;
-    // no logic needed here; rotation is driven externally
-  }, []);
 
   return (
     <Animated.Image
@@ -75,35 +68,24 @@ function GearItem({ gear, velocity, onClick }: any) {
   );
 }
 
-// ---------- Main Gears Screen ----------
+// ---------- Main Screen ----------
 export default function GearsScreen() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const [power, setPower] = useState(0);
 
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const goldVelocity = useSharedValue(0);
+  const prevAngleRef = useRef<number | null>(null);
 
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const { sound } = await Audio.Sound.createAsync(
-          require("../../assets/sounds/gear-click.mp3")
-        );
-        if (mounted) soundRef.current = sound;
-      } catch {}
-    })();
-    return () => {
-      soundRef.current?.unloadAsync();
-      soundRef.current = null;
-    };
+    preloadSounds({
+      gearClick: require("../../assets/sounds/gear-click.mp3"),
+    });
   }, []);
 
   const playClick = () => {
     if (!soundOn) return;
-    const s = soundRef.current;
-    if (!s) return;
-    s.replayAsync().catch(() => {});
+    playSound("gearClick", require("../../assets/sounds/gear-click.mp3"));
   };
 
   const GOLD_BASE = {
@@ -178,9 +160,7 @@ export default function GearsScreen() {
     return [GOLD_BASE, ...ring1, ...ring2];
   }, []);
 
-  const goldVelocity = useSharedValue(0);
-  const prevAngleRef = useRef<number | null>(null);
-
+  // ---------- Pan logic ----------
   const panResponder = useMemo(
     () =>
       PanResponder.create({
@@ -221,43 +201,44 @@ export default function GearsScreen() {
         },
         onPanResponderTerminationRequest: () => false,
       }),
-    []
+    [soundOn]
   );
+
+  // ---------- Reset ----------
+  const reset = () => {
+    goldVelocity.value = 0;
+    setPower(0);
+  };
 
   return (
     <FullscreenWrapper>
       <View style={styles.container} {...panResponder.panHandlers}>
+        {/* Header */}
+        <View style={styles.header}>
+          <BackButton />
+          <TouchableOpacity onPress={() => setSettingsVisible(true)}>
+            <Ionicons name="settings-sharp" size={30} color="#FDD017" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Power Display */}
         <View style={styles.powerWrap}>
           <Animated.Text style={styles.powerLabel}>POWER</Animated.Text>
           <Animated.Text style={styles.powerValue}>{power}</Animated.Text>
         </View>
 
+        {/* Gears */}
         {gearLayout.map((gear) => (
-          <GearItem key={gear.id} gear={gear} velocity={goldVelocity} onClick={playClick} />
+          <GearItem key={gear.id} gear={gear} />
         ))}
 
-        <BackButton />
-
-        <View style={styles.settings}>
-          <TouchableOpacity onPress={() => setSettingsVisible(true)}>
-            <Image
-              source={require("../../assets/icons/gears.png")}
-              style={styles.settingsIcon}
-              resizeMode="contain"
-            />
-          </TouchableOpacity>
-        </View>
-
+        {/* Settings Modal */}
         <SettingsModal
           visible={settingsVisible}
           onClose={() => setSettingsVisible(false)}
-          onReset={() => {
-            goldVelocity.value = 0;
-            setPower(0);
-          }}
+          onReset={reset}
           soundOn={soundOn}
           setSoundOn={setSoundOn}
-          blurEnabled
         />
       </View>
     </FullscreenWrapper>
@@ -267,9 +248,19 @@ export default function GearsScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#000" },
   gear: { position: "absolute" },
-  powerWrap: {
+  header: {
     position: "absolute",
     top: 28,
+    left: 18,
+    right: 22,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    zIndex: 12,
+    alignItems: "center",
+  },
+  powerWrap: {
+    position: "absolute",
+    top: 90,
     alignSelf: "center",
     alignItems: "center",
     zIndex: 10,
@@ -286,11 +277,4 @@ const styles = StyleSheet.create({
     fontSize: 42,
     lineHeight: 46,
   },
-  settings: {
-    position: "absolute",
-    top: 28,
-    right: 22,
-    zIndex: 12,
-  },
-  settingsIcon: { width: 34, height: 34, tintColor: "#FDD017" },
 });

@@ -1,3 +1,5 @@
+// app/screens/balloon-popper.tsx – v0.9-dev unified
+// Adds SettingsModal + sound toggle + reset function
 import React, {
   useCallback,
   useEffect,
@@ -14,22 +16,26 @@ import {
   StyleSheet,
   Text,
   View,
+  TouchableOpacity,
 } from "react-native";
-import { Audio, AVPlaybackStatus } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 import BackButton from "../../components/BackButton";
-import FullscreenWrapper from "../../components/FullscreenWrapper"; // ✅ hides status bar globally
+import FullscreenWrapper from "../../components/FullscreenWrapper";
+import SettingsModal from "../../components/SettingsModal";
+import { playSound, preloadSounds } from "../../lib/soundManager";
 
 import {
   balloonImages,
   cloudImages,
-  popSounds,
-  slashSounds,
+  popSounds,     // array of AV sources
+  slashSounds,   // array of AV sources
   type BalloonColor,
 } from "../../assets";
 import { rand, pick } from "../../utils/random";
 
-// ---------- Types ----------
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
+const makeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
 type Balloon = {
   id: string;
   color: BalloonColor;
@@ -40,7 +46,6 @@ type Balloon = {
   popped: boolean;
   scale: Animated.Value;
 };
-
 type Cloud = {
   id: string;
   imgIndex: number;
@@ -50,83 +55,49 @@ type Cloud = {
   speed: number;
 };
 
-// ---------- Constants ----------
-const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get("window");
-const makeId = () =>
-  `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-// ---------- Component ----------
 export default function BalloonPopper() {
   const [balloons, setBalloons] = useState<Balloon[]>([]);
   const [clouds, setClouds] = useState<Cloud[]>([]);
-  const [score, setScore] = useState<number>(0);
+  const [score, setScore] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
 
-  const popSoundObjs = useRef<Audio.Sound[]>([]);
-  const slashSoundObjs = useRef<Audio.Sound[]>([]);
   const rafRef = useRef<number | null>(null);
-  const lastTsRef = useRef<number>(0);
-  const nextBalloonAt = useRef<number>(0);
-  const nextCloudAt = useRef<number>(0);
+  const lastTsRef = useRef(0);
+  const nextBalloonAt = useRef(0);
+  const nextCloudAt = useRef(0);
 
   const colors: BalloonColor[] = useMemo(
     () => ["blue", "green", "orange", "pink", "purple", "red", "yellow"],
     []
   );
 
-  // ---------- Audio setup ----------
+  // ---------- Preload sounds ----------
   useEffect(() => {
-    let mounted = true;
-    (async () => {
-      await Audio.setAudioModeAsync({
-        playsInSilentModeIOS: false,
-        allowsRecordingIOS: false,
-        staysActiveInBackground: false,
-        interruptionModeIOS: 1,
-        shouldDuckAndroid: true,
-        playThroughEarpieceAndroid: false,
-      });
-
-      const pops = await Promise.all(
-        popSounds.map((src: any) =>
-          Audio.Sound.createAsync(src, { shouldPlay: false })
-        )
-      );
-      const slashes = await Promise.all(
-        slashSounds.map((src: any) =>
-          Audio.Sound.createAsync(src, { shouldPlay: false })
-        )
-      );
-
-      if (!mounted) {
-        pops.forEach((r) => r.sound.unloadAsync());
-        slashes.forEach((r) => r.sound.unloadAsync());
-        return;
-      }
-
-      popSoundObjs.current = pops.map((r) => r.sound);
-      slashSoundObjs.current = slashes.map((r) => r.sound);
-    })();
-
-    return () => {
-      mounted = false;
-      popSoundObjs.current.forEach((s) => s.unloadAsync());
-      slashSoundObjs.current.forEach((s) => s.unloadAsync());
-    };
+    const makeMap = (arr: any[], key: string) =>
+      Object.fromEntries(arr.map((src, i) => [`${key}${i}`, src]));
+    preloadSounds({
+      ...makeMap(popSounds as any[], "pop"),
+      ...makeMap(slashSounds as any[], "slash"),
+    });
   }, []);
 
-  const playOne = useCallback(async (arr: Audio.Sound[]) => {
-    if (arr.length === 0) return;
-    const s = pick(arr);
-    try {
-      await s.setPositionAsync(0);
-      const status = (await s.getStatusAsync()) as AVPlaybackStatus;
-      if ("isLoaded" in status && status.isLoaded && status.isPlaying) {
-        await s.stopAsync();
-        await s.setPositionAsync(0);
-      }
-      await s.playAsync();
-    } catch {}
-  }, []);
+  const playRandomFrom = useCallback(
+    async (arr: any[], key: string) => {
+      if (!soundOn || !arr || arr.length === 0) return;
+      const idx = Math.floor(Math.random() * arr.length);
+      await playSound(`${key}${idx}`, arr[idx]);
+    },
+    [soundOn]
+  );
+
+  const playPop = useCallback(async () => {
+    await playRandomFrom(popSounds as any[], "pop");
+  }, [playRandomFrom]);
+
+  const playSlash = useCallback(async () => {
+    await playRandomFrom(slashSounds as any[], "slash");
+  }, [playRandomFrom]);
 
   // ---------- Spawning ----------
   const spawnBalloon = useCallback(() => {
@@ -136,7 +107,6 @@ export default function BalloonPopper() {
     const x = rand(half + 6, SCREEN_W - half - 6);
     const y = SCREEN_H + half + 8;
     const speed = rand(1.2, 2.8);
-
     const b: Balloon = {
       id: makeId(),
       color,
@@ -158,7 +128,6 @@ export default function BalloonPopper() {
     const height = 80 * scale;
     const y = rand(20, SCREEN_H * 0.7 - height);
     const speed = rand(0.3, 0.8) * (2.2 - scale);
-
     const c: Cloud = {
       id: makeId(),
       imgIndex,
@@ -172,7 +141,7 @@ export default function BalloonPopper() {
     );
   }, []);
 
-  // ---------- Main Loop ----------
+  // ---------- Main loop ----------
   useEffect(() => {
     const loop = (ts: number) => {
       if (!lastTsRef.current) lastTsRef.current = ts;
@@ -212,7 +181,7 @@ export default function BalloonPopper() {
     };
   }, [spawnBalloon, spawnCloud]);
 
-  // ---------- Touch Handling ----------
+  // ---------- Touch handling ----------
   const handlePress = useCallback(
     (e: GestureResponderEvent) => {
       const { locationX: x, locationY: y } = e.nativeEvent;
@@ -225,9 +194,8 @@ export default function BalloonPopper() {
           const r = b.size / 2;
           if (dx * dx + dy * dy <= r * r) {
             setScore((s) => s + 1);
-            playOne(popSoundObjs.current);
+            playPop();
             b.popped = true;
-
             Animated.timing(b.scale, {
               toValue: 0,
               duration: 120,
@@ -240,18 +208,25 @@ export default function BalloonPopper() {
             return copy;
           }
         }
-        playOne(slashSoundObjs.current);
+        playSlash();
         return copy;
       });
     },
-    [playOne]
+    [playPop, playSlash]
   );
+
+  // ---------- Reset ----------
+  const reset = () => {
+    setScore(0);
+    setBalloons([]);
+    setClouds([]);
+  };
 
   // ---------- Render ----------
   return (
     <FullscreenWrapper>
       <View style={styles.container}>
-        {/* Background gradient */}
+        {/* Background */}
         <LinearGradient
           colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
           style={StyleSheet.absoluteFill}
@@ -259,11 +234,13 @@ export default function BalloonPopper() {
           end={{ x: 0.5, y: 1 }}
         />
 
-        {/* Header (Back + Score) */}
+        {/* Header */}
         <View style={styles.header}>
           <BackButton />
           <Text style={styles.score}>Score: {score}</Text>
-          <View style={{ width: 50 }} />
+          <TouchableOpacity onPress={() => setSettingsOpen(true)}>
+            <Text style={styles.gear}>⚙️</Text>
+          </TouchableOpacity>
         </View>
 
         {/* Clouds */}
@@ -311,6 +288,15 @@ export default function BalloonPopper() {
             );
           })}
         </Pressable>
+
+        {/* Settings modal */}
+        <SettingsModal
+          visible={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onReset={reset}
+          soundOn={soundOn}
+          setSoundOn={setSoundOn}
+        />
       </View>
     </FullscreenWrapper>
   );
@@ -327,7 +313,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    zIndex: 10, // ✅ keeps BackButton functional
+    zIndex: 10,
   },
   cloud: {
     position: "absolute",
@@ -344,4 +330,5 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
   },
+  gear: { fontSize: 26, color: "#FDD017" },
 });

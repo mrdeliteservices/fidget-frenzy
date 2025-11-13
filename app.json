@@ -38,7 +38,8 @@
         {
           "origin": false
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "extra": {
       "router": {

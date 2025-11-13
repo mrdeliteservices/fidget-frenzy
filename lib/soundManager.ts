@@ -1,43 +1,102 @@
+// lib/soundManager.ts
+// Fidget Frenzy — Global Sound Manager (v0.9-dev CLEAN)
+// Expo SDK 54 — silent preload, safe playback, no console logs
+// Shared across ALL mini-games
+
 import { Audio, AVPlaybackSource, AVPlaybackStatus } from "expo-av";
-import type { AVPlaybackStatusToSet } from "expo-av/build/AV";
 
+/**
+ * Universal Sound Manager for all Frenzy apps
+ * Handles preloading, playback, looping, and cleanup
+ */
 class SoundManager {
-  private readonly map = new Map<string, Audio.Sound>();
+  private readonly active = new Map<string, Audio.Sound>();
 
-  async play(
-    id: string,
-    src: AVPlaybackSource,
-    opts: AVPlaybackStatusToSet = { shouldPlay: true }
-  ) {
-    await this.stop(id);
-    const { sound } = await Audio.Sound.createAsync(src, opts);
-    this.map.set(id, sound);
+  /** Play a sound effect or loop */
+  async play(id: string, src: AVPlaybackSource, loop: boolean = false) {
+    try {
+      await this.stop(id); // ensure no duplicates
 
-    sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-      if ("didJustFinish" in status && status.didJustFinish) this.untrack(id);
-    });
+      const { sound } = await Audio.Sound.createAsync(src, {
+        shouldPlay: true,
+        isLooping: loop,
+        volume: 1.0,
+      });
 
-    return sound;
+      this.active.set(id, sound);
+
+      sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
+        if ("didJustFinish" in status && status.didJustFinish && !loop) {
+          this.untrack(id);
+        }
+      });
+    } catch {
+      // silent fail — no logs
+    }
   }
 
+  /** Stop and unload a specific sound */
   async stop(id: string) {
-    const s = this.map.get(id);
-    if (!s) return;
-    try { await s.stopAsync(); } catch {}
-    try { await s.unloadAsync(); } catch {}
-    this.map.delete(id);
+    const sound = this.active.get(id);
+    if (!sound) return;
+
+    try {
+      await sound.stopAsync();
+      await sound.unloadAsync();
+    } catch {
+      // silent
+    }
+
+    this.untrack(id);
   }
 
+  /** Stop and unload ALL sounds */
   async stopAll() {
-    const tasks = [...this.map.entries()].map(async ([id, s]) => {
-      try { await s.stopAsync(); } catch {}
-      try { await s.unloadAsync(); } catch {}
-      this.map.delete(id);
-    });
+    const tasks = Array.from(this.active.entries()).map(
+      async ([id, sound]) => {
+        try {
+          await sound.stopAsync();
+          await sound.unloadAsync();
+        } catch {
+          // silent
+        }
+        this.untrack(id);
+      }
+    );
+
     await Promise.all(tasks);
   }
 
-  private untrack(id: string) { this.map.delete(id); }
+  /** Remove from active map */
+  private untrack(id: string) {
+    this.active.delete(id);
+  }
 }
 
+/** Shared singleton instance */
 export const GlobalSoundManager = new SoundManager();
+
+/** Simple helper for quick playback */
+export const playSound = async (
+  id: string,
+  src: AVPlaybackSource,
+  loop: boolean = false
+) => GlobalSoundManager.play(id, src, loop);
+
+/** Silent preload — no logs EVER */
+export const preloadSounds = async (sounds: Record<string, AVPlaybackSource>) => {
+  const tasks = Object.entries(sounds).map(async ([_, src]) => {
+    try {
+      const { sound } = await Audio.Sound.createAsync(src, {
+        shouldPlay: false,
+      });
+
+      // Immediately unload — we want preload in memory, not active
+      await sound.unloadAsync();
+    } catch {
+      // silent
+    }
+  });
+
+  await Promise.all(tasks);
+};
