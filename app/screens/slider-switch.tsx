@@ -1,7 +1,12 @@
 // app/screens/slider-switch.tsx
-// Fidget Frenzy — Slider Switch (v0.9-dev RESTORED)
-// Restored lamp + beam visuals from v0.8 (no visual/physics changes)
-// Uses local expo-av click sound; header unified with Spinner (Back + counter + Ionicons settings)
+// Fidget Frenzy — Slider Switch (v0.9-dev WALL + BUTTON, RAPID FIRE + "Clicks:")
+//
+// Based on the 900+ line version you confirmed matches.
+// Changes from that version:
+//  1) Header counter now shows "Clicks:  X".
+//  2) Audio uses a 3-sound pool for rapid-fire clicking.
+//  3) toggle() no longer drops taps while animating and uses a faster 160ms animation.
+// No other layout / visual / geometry changes.
 
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -53,9 +58,9 @@ const COLOR = {
 // Show Dev FAB/Menu only in debug builds
 const DEBUG = false; // set to true if you ever want to tune again
 
-// ---- Layout constants (stable) ----
-const CEILING_H = 10; // styles.ceilingLine.height
-const CEILING_MARGIN_B = 4; // below the line
+// Layout constants
+const CEILING_H = 10;
+const CEILING_MARGIN_B = 4;
 
 export default function SliderSwitch() {
   const [isOn, setIsOn] = useState(false);
@@ -67,58 +72,72 @@ export default function SliderSwitch() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugOverlay, setDebugOverlay] = useState(false);
 
-  // Master animation
+  // Master animation for light + pool
   const a = useRef(new Animated.Value(0)).current;
   const animatingRef = useRef(false);
 
-  // --------- AUDIO: lazy-load on first use (avoids startup crash) ----------
-  const soundRef = useRef<Audio.Sound | null>(null);
-  const soundLoadedRef = useRef(false);
+  // --------- AUDIO: 3-SOUND POOL FOR RAPID FIRE ----------
+  const clickPoolRef = useRef<Audio.Sound[]>([]);
+  const clickPoolLoadedRef = useRef(false);
+  const clickPoolIndexRef = useRef(0);
 
-  const ensureSound = async () => {
-    if (soundLoadedRef.current) return;
+  const ensureClickPool = async () => {
+    if (clickPoolLoadedRef.current) return;
+
     try {
-      const { sound } = await Audio.Sound.createAsync(
-        require("../../assets/sounds/switch-click.mp3"),
-        { shouldPlay: false }
-      );
-      soundRef.current = sound;
-      soundLoadedRef.current = true;
-    } catch {
-      // swallow
+      const file = require("../../assets/sounds/switch-click.mp3");
+      const created: Audio.Sound[] = [];
+
+      for (let i = 0; i < 3; i++) {
+        const { sound } = await Audio.Sound.createAsync(file, {
+          shouldPlay: false,
+        });
+        created.push(sound);
+      }
+
+      clickPoolRef.current = created;
+      clickPoolLoadedRef.current = true;
+    } catch (e) {
+      console.warn("switch-click pool load error", e);
     }
   };
 
-  const playClick = async () => {
+  const playRapidClick = async () => {
     if (!soundOn) return;
+
+    await ensureClickPool();
+    const pool = clickPoolRef.current;
+    if (!pool.length) return;
+
+    // Simple round-robin: cycle through 3 sounds
+    const idx = clickPoolIndexRef.current % pool.length;
+    clickPoolIndexRef.current = (clickPoolIndexRef.current + 1) % pool.length;
+
+    const s = pool[idx];
+
     try {
-      if (!soundLoadedRef.current) await ensureSound();
-      const s = soundRef.current;
-      if (!s) return;
       await s.stopAsync().catch(() => {});
       await s.setPositionAsync(0).catch(() => {});
       await s.playAsync().catch(() => {});
     } catch {
-      // ignore playback errors
+      // swallow any playback glitch
     }
   };
 
   // ================== TUNABLES (Dev Menu) ==================
-  // Dome geometry
-  const [domeTopY, setDomeTopY] = useState(8); // top of curve
-  const [rimY, setRimY] = useState(120); // bottom of shade
+  // Dome & beam geometry
+  const [domeTopY, setDomeTopY] = useState(8);
+  const [rimY, setRimY] = useState(120);
   const [rimLeftPct, setRimLeftPct] = useState(0.22);
   const [rimRightPct, setRimRightPct] = useState(0.78);
   const [rimInnerInset, setRimInnerInset] = useState(8);
-
-  // Beam start (pixels below rim)
   const [beamOffset, setBeamOffset] = useState(0);
 
-  // Cord + Cap
-  const [capDrop, setCapDrop] = useState(0); // pixels below lampGroupTop
-  const [cordExtra, setCordExtra] = useState(0); // extra white below the cap
+  // Cord + cap
+  const [capDrop, setCapDrop] = useState(0);
+  const [cordExtra, setCordExtra] = useState(0);
 
-  // Pool
+  // Floor pool
   const [POOL_WIDTH_FACTOR, setPOOL_WIDTH_FACTOR] = useState(0.92);
   const [POOL_RX_FACTOR, setPOOL_RX_FACTOR] = useState(0.46);
   const [POOL_RY, setPOOL_RY] = useState(36);
@@ -137,16 +156,11 @@ export default function SliderSwitch() {
     const bulbBelowRim = 34;
     const bulbHalfW = 28;
 
-    // ---- Fixed lamp group placement (from ceiling) ----
-    const LAMP_GROUP_TOP = 120; // primary macro placement knob
+    const LAMP_GROUP_TOP = 120;
 
-    // White cord runs from under ceiling to the cap top + extra
     const cordHeight = Math.max(
       8,
-      LAMP_GROUP_TOP -
-        (CEILING_H + CEILING_MARGIN_B) +
-        capDrop +
-        cordExtra
+      LAMP_GROUP_TOP - (CEILING_H + CEILING_MARGIN_B) + capDrop + cordExtra
     );
 
     return {
@@ -185,27 +199,28 @@ export default function SliderSwitch() {
     POOL_RAISE,
   ]);
 
-  // Toggle with debounce
-  const toggle = async () => {
-    if (animatingRef.current) return;
-    animatingRef.current = true;
+  // Toggle — now rapid fire, no dropped taps
+  const toggle = () => {
     const next = !isOn;
     setIsOn(next);
     setCount((c) => c + 1);
 
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
+    // Fire-and-forget haptics + sound
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    playRapidClick();
 
-    await playClick();
+    animatingRef.current = true;
 
-    Animated.timing(a, {
-      toValue: next ? 1 : 0,
-      duration: 420,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start(() => {
-      animatingRef.current = false;
+    // Stop any in-progress animation, then retarget
+    a.stopAnimation(() => {
+      Animated.timing(a, {
+        toValue: next ? 1 : 0,
+        duration: 160, // faster snap for LIGHT + POOL
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start(() => {
+        animatingRef.current = false;
+      });
     });
   };
 
@@ -222,16 +237,17 @@ export default function SliderSwitch() {
     inputRange: [0, 1],
     outputRange: [0, 1],
   });
+
   const filamentOpacity = a.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 1],
   });
+
   const coneIntensity = a.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 0.95],
   });
 
-  // Beam trapezoid path
   const conePath = `
     M ${(L.bottomW - L.topW) / 2} 0
     L ${(L.bottomW + L.topW) / 2} 0
@@ -244,28 +260,36 @@ export default function SliderSwitch() {
     <FullscreenWrapper>
       <View style={[styles.root, { backgroundColor: COLOR.bg }]}>
         <SafeAreaView style={{ flex: 1 }}>
-          {/* Header (unified with Spinner: back + pill + Ionicons settings) */}
+          {/* HEADER */}
           <View style={styles.topBar}>
             <BackButton />
             <View style={styles.counterPill}>
+              <Text style={styles.counterLabel}>Clicks:</Text>
               <Text style={styles.counterTxt}>{count}</Text>
             </View>
             <TouchableOpacity
               onPress={() => setSettingsOpen(true)}
               style={styles.settingsBtn}
             >
-              <Ionicons
-                name="settings-sharp"
-                size={26}
-                color="#C0C0C0"
-              />
+              <Ionicons name="settings-sharp" size={26} color="#C0C0C0" />
             </TouchableOpacity>
           </View>
 
           {/* Ceiling line */}
           <View style={styles.ceilingLine} />
 
-          {/* White cord (independent from lamp/beam) */}
+          {/* BACK WALL */}
+          <View style={styles.wallContainer} pointerEvents="none">
+            <View style={styles.upperWall} />
+            <View style={styles.chairRail} />
+            <View style={styles.lowerWall}>
+              {Array.from({ length: 18 }).map((_, idx) => (
+                <View key={idx} style={styles.wainscotPanel} />
+              ))}
+            </View>
+          </View>
+
+          {/* Cord */}
           <View
             style={[
               styles.cord,
@@ -274,10 +298,8 @@ export default function SliderSwitch() {
           />
 
           {/* ===================== LAMP GROUP ===================== */}
-          <View
-            style={[styles.lampGroup, { top: L.LAMP_GROUP_TOP }]}
-          >
-            {/* Gray cap (two stacked rounded rects) */}
+          <View style={[styles.lampGroup, { top: L.LAMP_GROUP_TOP }]}>
+            {/* Cap */}
             <View
               style={{
                 position: "absolute",
@@ -303,7 +325,7 @@ export default function SliderSwitch() {
               }}
             />
 
-            {/* BEAM (relative to lamp group) */}
+            {/* BEAM */}
             <Animated.View
               pointerEvents="none"
               style={{
@@ -341,7 +363,6 @@ export default function SliderSwitch() {
                   </SvgLinearGradient>
                 </Defs>
                 <Path d={conePath} fill="url(#beamFadeY)" />
-
                 {debugOverlay && (
                   <>
                     <Line
@@ -367,7 +388,7 @@ export default function SliderSwitch() {
               </Svg>
             </Animated.View>
 
-            {/* SVG Lamp (bulb clipped by rim; dome in front) */}
+            {/* Lamp dome + bulb */}
             <View
               style={{
                 position: "absolute",
@@ -377,36 +398,28 @@ export default function SliderSwitch() {
                 alignItems: "center",
               }}
             >
-              <Svg
-                width={L.domeW}
-                height={Math.max(240, rimY + 40)}
-              >
+              <Svg width={L.domeW} height={Math.max(240, rimY + 40)}>
                 <Defs>
                   <ClipPath id="belowRim">
-                    <Rect
-                      x={0}
-                      y={rimY}
-                      width={L.domeW}
-                      height={H}
-                    />
+                    <Rect x={0} y={rimY} width={L.domeW} height={H} />
                   </ClipPath>
                 </Defs>
 
-                {/* Bulb (only below rim) */}
+                {/* Bulb */}
                 <G clipPath="url(#belowRim)">
                   <Path
                     d={`
                       M ${L.domeW / 2 - L.bulbHalfW} ${rimY - 10}
-                      Q ${L.domeW / 2 - (L.bulbHalfW - 6)} ${
-                      rimY - 26
-                    } ${L.domeW / 2} ${rimY - 40}
-                      Q ${L.domeW / 2 + (L.bulbHalfW - 6)} ${
-                      rimY - 26
-                    } ${L.domeW / 2 + L.bulbHalfW} ${rimY - 10}
-                      Q ${L.domeW / 2 + L.bulbHalfW} ${rimY - 2}  ${
+                      Q ${L.domeW / 2 - (L.bulbHalfW - 6)} ${rimY - 26} ${
+                      L.domeW / 2
+                    } ${rimY - 40}
+                      Q ${L.domeW / 2 + (L.bulbHalfW - 6)} ${rimY - 26} ${
+                      L.domeW / 2 + L.bulbHalfW
+                    } ${rimY - 10}
+                      Q ${L.domeW / 2 + L.bulbHalfW} ${rimY - 2} ${
                       L.domeW / 2
                     } ${rimY + 34}
-                      Q ${L.domeW / 2 - L.bulbHalfW} ${rimY - 2}  ${
+                      Q ${L.domeW / 2 - L.bulbHalfW} ${rimY - 2} ${
                       L.domeW / 2 - L.bulbHalfW
                     } ${rimY - 10} Z
                     `}
@@ -439,7 +452,7 @@ export default function SliderSwitch() {
                   />
                 </G>
 
-                {/* Dome (front) */}
+                {/* Dome */}
                 <Path
                   d={`
                     M ${L.domeW * rimLeftPct} ${rimY}
@@ -449,26 +462,11 @@ export default function SliderSwitch() {
                   `}
                   fill={COLOR.dome}
                 />
-
-                {debugOverlay && (
-                  <Path
-                    d={`
-                      M ${L.domeW * rimLeftPct} ${rimY}
-                      Q ${L.domeW / 2} ${domeTopY} ${
-                      L.domeW * rimRightPct
-                    } ${rimY}
-                    `}
-                    stroke="cyan"
-                    strokeDasharray="6,4"
-                    strokeWidth={1}
-                    fill="none"
-                  />
-                )}
               </Svg>
             </View>
           </View>
 
-          {/* ===================== POOL (absolute from screen top) ===================== */}
+          {/* ===================== FLOOR POOL ===================== */}
           <Animated.View
             pointerEvents="none"
             style={{
@@ -481,7 +479,7 @@ export default function SliderSwitch() {
                 rimY +
                 beamOffset +
                 L.coneH +
-                POOL_RAISE,
+                L.POOL_RAISE,
               left: "50%",
               transform: [
                 { translateX: -(W * L.POOL_WIDTH_FACTOR) / 2 },
@@ -515,65 +513,40 @@ export default function SliderSwitch() {
             </Svg>
           </Animated.View>
 
-          {/* ===================== SWITCH ===================== */}
-          <View style={{ flex: 1 }} />
-          <View style={styles.switchAnchor}>
-            <View style={styles.switchWrap}>
-              <TouchableWithoutFeedback onPress={toggle}>
-                <Animated.View
-                  style={[
-                    styles.track,
-                    {
-                      width: 124,
-                      height: 214,
-                      padding: 10,
-                      borderRadius: 22,
-                      borderWidth: 2,
-                      backgroundColor: a.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [
-                          "rgba(255,255,255,0.08)",
-                          "rgba(255,201,60,0.38)",
-                        ],
-                      }) as any,
-                      borderColor: a.interpolate({
-                        inputRange: [0, 1],
-                        outputRange: [
-                          "rgba(0,0,0,0.30)",
-                          "rgba(255,201,60,0.80)",
-                        ],
-                      }) as any,
-                    },
-                  ]}
-                >
+          {/* ===================== WALL-MOUNTED BUTTON ===================== */}
+          <View style={styles.buttonContainer}>
+            <View style={styles.buttonPlate}>
+              <View style={styles.screwRow}>
+                <View style={styles.screwDot} />
+                <View style={styles.screwDot} />
+              </View>
+              <View style={styles.buttonCapWrap}>
+                <TouchableWithoutFeedback onPress={toggle}>
                   <Animated.View
                     style={[
-                      styles.knob,
+                      styles.buttonCap,
                       {
-                        width: 104,
-                        height: 92,
-                        borderRadius: 16,
                         transform: [
                           {
                             translateY: a.interpolate({
                               inputRange: [0, 1],
-                              outputRange: [214 - 20 - 92, 0],
+                              outputRange: [4, 0],
                             }),
                           },
                         ],
-                        backgroundColor: a.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: ["#FFFFFF", "#FFF6D4"],
-                        }) as any,
                       },
                     ]}
                   />
-                </Animated.View>
-              </TouchableWithoutFeedback>
+                </TouchableWithoutFeedback>
+              </View>
+              <View style={styles.screwRow}>
+                <View style={styles.screwDot} />
+                <View style={styles.screwDot} />
+              </View>
             </View>
           </View>
 
-          {/* Settings modal (no accent props for now) */}
+          {/* Settings modal */}
           <SettingsModal
             visible={settingsOpen}
             onClose={() => setSettingsOpen(false)}
@@ -589,8 +562,6 @@ export default function SliderSwitch() {
             <TouchableOpacity
               onPress={() => setDebugOpen(true)}
               style={styles.devFab}
-              accessibilityRole="button"
-              accessibilityLabel="Open developer tuning menu"
             >
               <Text style={{ color: "#111", fontWeight: "700" }}>⚙️</Text>
             </TouchableOpacity>
@@ -701,20 +672,18 @@ export default function SliderSwitch() {
                       ),
                     () =>
                       setPOOL_WIDTH_FACTOR((v) =>
-                        +(Math.min(1.0, v + 0.02)).toFixed(2)
-                      )
+                        +(Math.min(1.0, v + 0.02)).toFixed(2))
                   )}
                   {row(
                     "Pool RX",
                     POOL_RX_FACTOR,
                     () =>
                       setPOOL_RX_FACTOR((v) =>
-                        +(Math.max(0.2, v - 0.02)).toFixed(2)
-                      ),
+                        +(Math.max(0.2, v - 0.02)).toFixed(2))
+                    ,
                     () =>
                       setPOOL_RX_FACTOR((v) =>
-                        +(Math.min(0.6, v + 0.02)).toFixed(2)
-                      )
+                        +(Math.min(0.6, v + 0.02)).toFixed(2))
                   )}
                   {row(
                     "Pool RY",
@@ -817,13 +786,20 @@ const styles = StyleSheet.create({
   settingsBtn: { paddingHorizontal: 10, paddingVertical: 6 },
 
   counterPill: {
+    flexDirection: "row",
+    alignItems: "center",
     minWidth: 64,
     paddingHorizontal: 14,
     height: 32,
     borderRadius: 16,
-    alignItems: "center",
     justifyContent: "center",
     backgroundColor: "rgba(0,0,0,0.25)",
+  },
+  counterLabel: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 14,
+    marginRight: 4,
   },
   counterTxt: { color: "#fff", fontWeight: "800", fontSize: 16 },
 
@@ -832,6 +808,36 @@ const styles = StyleSheet.create({
     height: CEILING_H,
     backgroundColor: "rgba(0,0,0,0.25)",
     marginBottom: CEILING_MARGIN_B,
+  },
+
+  wallContainer: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: CEILING_H + CEILING_MARGIN_B + 40,
+    bottom: 0,
+    zIndex: -1,
+  },
+  upperWall: {
+    flex: 1,
+    backgroundColor: "#081A34",
+  },
+  chairRail: {
+    height: 4,
+    backgroundColor: "#0F223F",
+  },
+  lowerWall: {
+    flex: 1,
+    backgroundColor: "#06172B",
+    flexDirection: "row",
+    paddingHorizontal: 12,
+    paddingTop: 10,
+  },
+  wainscotPanel: {
+    flex: 1,
+    marginHorizontal: 6,
+    borderRadius: 6,
+    backgroundColor: "rgba(255,255,255,0.03)",
   },
 
   lampGroup: {
@@ -847,30 +853,56 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
 
-  switchAnchor: {
+  buttonContainer: {
     position: "absolute",
+    top: H * 0.52,
     left: 0,
     right: 0,
-    bottom: 18,
     alignItems: "center",
   },
-  switchWrap: { width: "100%", alignItems: "center" },
-
-  track: {
-    justifyContent: "flex-start",
+  buttonPlate: {
+    width: 148,
+    height: 148,
+    borderRadius: 24,
+    backgroundColor: "#2A2D32",
     shadowColor: "#000",
-    shadowOpacity: 0.28,
-    shadowRadius: 12,
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 18,
   },
-  knob: {
+  screwRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  screwDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: "#41454C",
     shadowColor: "#000",
-    shadowOpacity: 0.22,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+  },
+  buttonCapWrap: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  buttonCap: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    backgroundColor: "#FF3131",
+    shadowColor: "#000",
+    shadowOpacity: 0.4,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
   },
 
-  // Dev FAB/Menu
   devFab: {
     position: "absolute",
     right: 14,
