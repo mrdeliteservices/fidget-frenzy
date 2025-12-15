@@ -1,29 +1,24 @@
-// Fidget Frenzy – Gears v0.9-dev (Interlock tuned, Spinner header, wind→unwind SFX)
-// Thumb-focused layout, organic cluster, correct interlocking, strong unwind.
-// Slide-off fix: sliding off gold gear now behaves like release WITHOUT zeroing power.
+// Fidget Frenzy – Gears v0.9-dev unified
+// Integrates SettingsModal, sound toggle, and Ionicons gear icon
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, StyleSheet, Dimensions, PanResponder } from "react-native";
-import Animated, {
-  useSharedValue,
-  useAnimatedStyle,
-} from "react-native-reanimated";
+import React, { useMemo, useRef, useEffect, useState } from "react";
+import {
+  View,
+  StyleSheet,
+  Dimensions,
+  PanResponder,
+  TouchableOpacity,
+} from "react-native";
+import Animated, { useSharedValue, useAnimatedStyle } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
-import { Audio } from "expo-av";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import { playSound, preloadSounds } from "../../lib/soundManager";
 
 const { width: W, height: H } = Dimensions.get("window");
-const SHORT_SIDE = Math.min(W, H);
-
-const BRAND = {
-  blue: "#0B1E3D",
-  gold: "#FDD017",
-  silver: "#C0C0C0",
-};
 
 // ---- Assets ----
 const IMG = {
@@ -36,46 +31,29 @@ const IMG = {
   brightS: require("../../assets/gears/gear_bright_small.png"),
 };
 
-const GEAR_POOL_MED = [IMG.silverL, IMG.silverM];
-const GEAR_POOL_SMALL = [IMG.silverS, IMG.gunS, IMG.darkS, IMG.brightS];
+const GEAR_POOL = [
+  IMG.silverL,
+  IMG.silverM,
+  IMG.silverS,
+  IMG.gunS,
+  IMG.darkS,
+  IMG.brightS,
+];
 
-// Sizes – tuned for visibility & thumb-friendly layout
 const SIZES = {
-  GOLD: SHORT_SIDE * 0.48,
-  L: SHORT_SIDE * 0.30,
-  M: SHORT_SIDE * 0.22,
-  S: SHORT_SIDE * 0.16,
+  GOLD: Math.min(W, H) * 0.42,
+  L: Math.min(W, H) * 0.22,
+  M: Math.min(W, H) * 0.18,
+  S: Math.min(W, H) * 0.12,
+  XS: Math.min(W, H) * 0.09,
 };
 
-type GearConfig = {
-  id: string;
-  src: any;
-  x: number;
-  y: number;
-  size: number;
-  dir: number;
-  speed: number;
-  isGold?: boolean;
-};
-
-type InternalGear = {
-  id: string;
-  src: any;
-  cx: number;
-  cy: number;
-  r: number;
-  dir: number;
-  speed: number;
-};
-
-// ---------------------------------------------------------
-// GEAR ITEM
-// ---------------------------------------------------------
-function GearItem({ gear, goldAngle }: { gear: GearConfig; goldAngle: any }) {
-  const style = useAnimatedStyle(() => {
-    const angle = goldAngle.value * gear.speed * gear.dir;
-    return { transform: [{ rotate: `${angle}deg` }] };
-  });
+// ---------- Gear Item ----------
+function GearItem({ gear }: any) {
+  const rot = useSharedValue(0);
+  const style = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rot.value}deg` }],
+  }));
 
   return (
     <Animated.Image
@@ -90,685 +68,171 @@ function GearItem({ gear, goldAngle }: { gear: GearConfig; goldAngle: any }) {
   );
 }
 
-// ---------------------------------------------------------
-// MAIN COMPONENT
-// ---------------------------------------------------------
+// ---------- Main Screen ----------
 export default function GearsScreen() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const [power, setPower] = useState(0);
 
-  const goldAngle = useSharedValue(0);
-
-  const energyRef = useRef(0);
-  const powerRef = useRef(0);
-
-  const draggingRef = useRef(false);
-  const hadGoldTouchRef = useRef(false);
+  const goldVelocity = useSharedValue(0);
   const prevAngleRef = useRef<number | null>(null);
 
-  // Movement thresholds + jitter lock
-  const MIN_MOVE_TO_START = 0.4;
-  const MIN_MOVE_TO_STOP = 0.1;
-  const PAUSE_STABILIZE_MS = 40;
-
-  const pauseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastMoveTimeRef = useRef(Date.now());
-
-  // Audio sound refs
-  const windSoundRef = useRef<Audio.Sound | null>(null);
-  const unwindSoundRef = useRef<Audio.Sound | null>(null);
-
-  // Audio mutex/tokens
-  const audioLockRef = useRef<"none" | "wind" | "unwind">("none");
-  const windPlayIdRef = useRef(0);
-  const unwindPlayIdRef = useRef(0);
-
-  // Unwind state
-  const isUnwindingRef = useRef(false);
-  const unwindStartEnergyRef = useRef(0);
-  const unwindDurationRef = useRef(0);
-  const unwindElapsedRef = useRef(0);
-
-  // -------------------------------------------------------
-  // LOAD / UNLOAD SOUNDS
-  // -------------------------------------------------------
   useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const [windResult, unwindResult] = await Promise.all([
-          Audio.Sound.createAsync(
-            require("../../assets/sounds/gear-winding.mp3"),
-            { isLooping: true, volume: 1.0 }
-          ),
-          Audio.Sound.createAsync(
-            require("../../assets/sounds/gear-unwinding.mp3"),
-            { isLooping: false, volume: 1.0 }
-          ),
-        ]);
-
-        if (!cancelled) {
-          windSoundRef.current = windResult.sound;
-          unwindSoundRef.current = unwindResult.sound;
-        } else {
-          await windResult.sound.unloadAsync();
-          await unwindResult.sound.unloadAsync();
-        }
-      } catch {
-        // fail silently, game still runs without audio
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      (async () => {
-        try {
-          if (windSoundRef.current) {
-            await windSoundRef.current.stopAsync();
-            await windSoundRef.current.unloadAsync();
-          }
-          if (unwindSoundRef.current) {
-            await unwindSoundRef.current.stopAsync();
-            await unwindSoundRef.current.unloadAsync();
-          }
-        } catch {
-        } finally {
-          windSoundRef.current = null;
-          unwindSoundRef.current = null;
-          audioLockRef.current = "none";
-        }
-      })();
-    };
-  }, []);
-
-  // -------------------------------------------------------
-  // SOUND HELPERS
-  // -------------------------------------------------------
-  const hardStopAllAudio = () => {
-    (async () => {
-      try {
-        if (windSoundRef.current) await windSoundRef.current.stopAsync();
-        if (unwindSoundRef.current) await unwindSoundRef.current.stopAsync();
-      } catch {
-      } finally {
-        audioLockRef.current = "none";
-      }
-    })();
-  };
-
-  const startWind = () => {
-    if (!soundOn) return;
-    const snd = windSoundRef.current;
-    if (!snd) return;
-
-    const playId = ++windPlayIdRef.current;
-    audioLockRef.current = "wind";
-
-    (async () => {
-      try {
-        if (unwindSoundRef.current) {
-          try {
-            await unwindSoundRef.current.stopAsync();
-          } catch {}
-        }
-
-        if (audioLockRef.current !== "wind" || windPlayIdRef.current !== playId)
-          return;
-
-        await snd.setIsLoopingAsync(true);
-
-        if (audioLockRef.current !== "wind" || windPlayIdRef.current !== playId)
-          return;
-
-        await snd.playAsync();
-      } catch {
-        // ignore
-      }
-    })();
-  };
-
-  const stopWind = () => {
-    const snd = windSoundRef.current;
-    if (!snd) {
-      if (audioLockRef.current === "wind") audioLockRef.current = "none";
-      return;
-    }
-
-    (async () => {
-      try {
-        await snd.stopAsync();
-      } catch {
-      } finally {
-        if (audioLockRef.current === "wind") {
-          audioLockRef.current = "none";
-        }
-      }
-    })();
-  };
-
-  const startUnwindSound = () => {
-    if (!soundOn) return;
-    const snd = unwindSoundRef.current;
-    if (!snd) return;
-
-    const playId = ++unwindPlayIdRef.current;
-    audioLockRef.current = "unwind";
-
-    (async () => {
-      try {
-        if (windSoundRef.current) {
-          try {
-            await windSoundRef.current.stopAsync();
-          } catch {}
-        }
-
-        if (
-          audioLockRef.current !== "unwind" ||
-          unwindPlayIdRef.current !== playId
-        ) {
-          return;
-        }
-
-        await snd.setIsLoopingAsync(false);
-
-        if (
-          audioLockRef.current !== "unwind" ||
-          unwindPlayIdRef.current !== playId
-        ) {
-          return;
-        }
-
-        // Use replayAsync instead of manual seek to reduce "Seeking interrupted" spam
-        await snd.replayAsync();
-      } catch {
-        // ignore
-      }
-    })();
-  };
-
-  const stopUnwindSound = () => {
-    const snd = unwindSoundRef.current;
-    if (!snd) {
-      if (audioLockRef.current === "unwind") audioLockRef.current = "none";
-      return;
-    }
-
-    (async () => {
-      try {
-        await snd.stopAsync();
-      } catch {
-      } finally {
-        if (audioLockRef.current === "unwind") {
-          audioLockRef.current = "none";
-        }
-      }
-    })();
-  };
-
-  const stopAllGearSounds = () => {
-    isUnwindingRef.current = false;
-    hardStopAllAudio();
-  };
-
-  // -------------------------------------------------------
-  // LAYOUT + INTERLOCK ENGINE
-  // -------------------------------------------------------
-  const GOLD_RADIUS = SIZES.GOLD / 2;
-
-  const CENTER_X = W / 2;
-  const CENTER_Y = H * 0.68;
-
-  const gearLayout: GearConfig[] = useMemo(() => {
-    const gears: InternalGear[] = [];
-    const parents: number[] = [];
-
-    gears.push({
-      id: "gold",
-      src: IMG.gold,
-      cx: CENTER_X,
-      cy: CENTER_Y,
-      r: GOLD_RADIUS,
-      dir: 1,
-      speed: 1,
+    preloadSounds({
+      gearClick: require("../../assets/sounds/gear-click.mp3"),
     });
-    parents.push(-1);
-
-    const TOTAL_GEARS = 30;
-
-    const pickSize = (i: number) => {
-      if (i < 7) return Math.random() < 0.6 ? SIZES.M : SIZES.L;
-      return SIZES.S;
-    };
-
-    const pickSrc = (r: number) => {
-      if (Math.abs(r - SIZES.L / 2) < 1 || Math.abs(r - SIZES.M / 2) < 1) {
-        return GEAR_POOL_MED[Math.floor(Math.random() * GEAR_POOL_MED.length)];
-      }
-      return GEAR_POOL_SMALL[Math.floor(Math.random() * GEAR_POOL_SMALL.length)];
-    };
-
-    for (let i = 1; i < TOTAL_GEARS; i++) {
-      let placed = false;
-      let attempts = 0;
-
-      while (!placed && attempts < 32) {
-        attempts++;
-
-        const parentIndex = Math.floor(Math.random() * gears.length);
-        const parent = gears[parentIndex];
-        const size = pickSize(i);
-        const r = size / 2;
-
-        const angle = Math.random() * Math.PI * 2;
-        const targetDist = parent.r + r;
-
-        const cx = parent.cx + Math.cos(angle) * (targetDist - 1);
-        const cy = parent.cy + Math.sin(angle) * (targetDist - 1);
-
-        if (
-          cx - r < -40 ||
-          cx + r > W + 40 ||
-          cy + r > H + 35 ||
-          cy - r < H * 0.16
-        ) {
-          continue;
-        }
-
-        let valid = true;
-        for (let j = 0; j < gears.length; j++) {
-          if (j === parentIndex) continue;
-          const g = gears[j];
-          const dx = cx - g.cx;
-          const dy = cy - g.cy;
-          const dist = Math.hypot(dx, dy);
-          const minGap = g.r + r;
-
-          if (dist < minGap * 1.1) {
-            valid = false;
-            break;
-          }
-        }
-        if (!valid) continue;
-
-        gears.push({
-          id: `gear-${i}-${Math.random().toString(36).slice(2)}`,
-          src: pickSrc(r),
-          cx,
-          cy,
-          r,
-          dir: 0,
-          speed: 0,
-        });
-        parents.push(parentIndex);
-        placed = true;
-      }
-    }
-
-    const n = gears.length;
-    const neighbors = Array.from({ length: n }, () => [] as number[]);
-
-    for (let i = 1; i < n; i++) {
-      const p = parents[i];
-      if (p >= 0) {
-        neighbors[i].push(p);
-        neighbors[p].push(i);
-      }
-    }
-
-    const queue = [0];
-    gears[0].dir = 1;
-    gears[0].speed = 1;
-
-    while (queue.length > 0) {
-      const idx = queue.shift()!;
-      const g = gears[idx];
-
-      for (const ni of neighbors[idx]) {
-        const ng = gears[ni];
-        if (ng.dir !== 0) continue;
-        ng.dir = -g.dir;
-        ng.speed = g.speed * (g.r / ng.r);
-        queue.push(ni);
-      }
-    }
-
-    return gears.map((g) => ({
-      id: g.id,
-      src: g.src,
-      x: g.cx - g.r,
-      y: g.cy - g.r,
-      size: g.r * 2,
-      dir: g.dir,
-      speed: g.speed,
-      isGold: g.id === "gold",
-    }));
   }, []);
 
-  // -------------------------------------------------------
-  // POWER CALC
-  // -------------------------------------------------------
-  const updatePowerFromEnergy = () => {
-    const newPower = Math.round(energyRef.current / 8);
-    if (newPower !== powerRef.current) {
-      powerRef.current = newPower;
-      setPower(newPower);
+  const playClick = () => {
+    if (!soundOn) return;
+    playSound("gearClick", require("../../assets/sounds/gear-click.mp3"));
+  };
+
+  const GOLD_BASE = {
+    id: "gold",
+    src: IMG.gold,
+    x: W / 2 - SIZES.GOLD / 2,
+    y: H * 0.74 - SIZES.GOLD / 2,
+    size: SIZES.GOLD,
+    r: SIZES.GOLD / 2,
+    dir: 1,
+  };
+
+  // ---------- Static Layout ----------
+  const gearLayout = useMemo(() => {
+    const makeRing = (
+      centerX: number,
+      centerY: number,
+      centerR: number,
+      ringGap: number,
+      count: number,
+      sizePicker: () => number,
+      startAngle = -Math.PI / 2
+    ) => {
+      const arr: any[] = [];
+      for (let i = 0; i < count; i++) {
+        const sz = sizePicker();
+        const r = sz / 2;
+        const distance = centerR + r - 2 + ringGap;
+        const ang = startAngle + (i * (Math.PI * 2)) / count;
+        const cx = centerX + Math.cos(ang) * distance;
+        const cy = centerY + Math.sin(ang) * distance;
+        if (
+          cx + r < -20 ||
+          cx - r > W + 20 ||
+          cy + r < -20 ||
+          cy - r > H + 20
+        )
+          continue;
+        arr.push({
+          id: `ring-${Math.random().toString(36).slice(2)}`,
+          src: GEAR_POOL[Math.floor(Math.random() * GEAR_POOL.length)],
+          x: cx - r,
+          y: cy - r,
+          size: sz,
+          r,
+          dir: -1,
+        });
+      }
+      return arr;
+    };
+
+    const pickM = () => (Math.random() < 0.5 ? SIZES.M : SIZES.S);
+    const pickS = () => (Math.random() < 0.6 ? SIZES.S : SIZES.XS);
+
+    const ring1 = makeRing(
+      GOLD_BASE.x + GOLD_BASE.r,
+      GOLD_BASE.y + GOLD_BASE.r,
+      GOLD_BASE.r,
+      0,
+      6,
+      pickM
+    );
+    const ring2: any[] = [];
+    for (const g of ring1) {
+      const cx = g.x + g.r;
+      const cy = g.y + g.r;
+      ring2.push(
+        ...makeRing(cx, cy, g.r, -2, 3, pickS, Math.random() * Math.PI * 2)
+      );
     }
-  };
 
-  // -------------------------------------------------------
-  // RESET
-  // -------------------------------------------------------
-  const reset = () => {
-    goldAngle.value = 0;
-    energyRef.current = 0;
-    powerRef.current = 0;
-    setPower(0);
+    return [GOLD_BASE, ...ring1, ...ring2];
+  }, []);
 
-    isUnwindingRef.current = false;
-    unwindStartEnergyRef.current = 0;
-    unwindDurationRef.current = 0;
-    unwindElapsedRef.current = 0;
-
-    stopAllGearSounds();
-  };
-
-  // -------------------------------------------------------
-  // PANRESPONDER
-  // -------------------------------------------------------
+  // ---------- Pan logic ----------
   const panResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
-
         onPanResponderGrant: (_, g) => {
-          const dx = g.x0 - CENTER_X;
-          const dy = g.y0 - CENTER_Y;
+          const GOLD = GOLD_BASE;
+          const cx = GOLD.x + GOLD.r;
+          const cy = GOLD.y + GOLD.r;
+          const dx = g.x0 - cx;
+          const dy = g.y0 - cy;
           const dist = Math.hypot(dx, dy);
-
-          if (dist <= GOLD_RADIUS * 1.15) {
-            draggingRef.current = true;
-            hadGoldTouchRef.current = true;
+          if (dist <= GOLD.r * 1.2) {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             prevAngleRef.current = Math.atan2(dy, dx);
-
-            isUnwindingRef.current = false;
-            stopUnwindSound();
-
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
-              () => {}
-            );
           } else {
-            draggingRef.current = false;
-            hadGoldTouchRef.current = false;
             prevAngleRef.current = null;
           }
         },
-
         onPanResponderMove: (_, g) => {
-          if (!draggingRef.current || prevAngleRef.current == null) {
-            stopWind();
-            return;
-          }
-
-          const dx = g.moveX - CENTER_X;
-          const dy = g.moveY - CENTER_Y;
-          const dist = Math.hypot(dx, dy);
-
-          // ---- SLIDE-OFF DETECTION ----
-          if (dist > GOLD_RADIUS * 1.3) {
-            // Treat as a RELEASE, but keep energy (no reset)
-            draggingRef.current = false;
-            hadGoldTouchRef.current = false;
-            prevAngleRef.current = null;
-
-            if (pauseTimerRef.current) {
-              clearTimeout(pauseTimerRef.current);
-              pauseTimerRef.current = null;
-            }
-
-            stopWind();
-
-            if (energyRef.current > 10 && !isUnwindingRef.current) {
-              const startE = energyRef.current;
-              isUnwindingRef.current = true;
-              unwindStartEnergyRef.current = startE;
-              unwindElapsedRef.current = 0;
-
-              const MIN_UNWIND_MS = 700;
-              const MAX_UNWIND_MS = 6500;
-              const MAX_ENERGY_FOR_DURATION = 240000;
-
-              const clamped = Math.min(MAX_ENERGY_FOR_DURATION, startE);
-              const ratio =
-                MAX_ENERGY_FOR_DURATION > 0
-                  ? clamped / MAX_ENERGY_FOR_DURATION
-                  : 0;
-
-              unwindDurationRef.current =
-                MIN_UNWIND_MS +
-                (MAX_UNWIND_MS - MIN_UNWIND_MS) * ratio;
-
-              startUnwindSound();
-            }
-
-            return;
-          }
-
-          // ---- NORMAL DRAG LOGIC (still on gear) ----
+          const GOLD = GOLD_BASE;
+          if (prevAngleRef.current == null) return;
+          const cx = GOLD.x + GOLD.r;
+          const cy = GOLD.y + GOLD.r;
+          const dx = g.moveX - cx;
+          const dy = g.moveY - cy;
           const ang = Math.atan2(dy, dx);
-
           let delta = ang - prevAngleRef.current;
           if (delta > Math.PI) delta -= 2 * Math.PI;
           if (delta < -Math.PI) delta += 2 * Math.PI;
-
           const deg = (delta * 180) / Math.PI;
-          const absDeg = Math.abs(deg);
-
-          lastMoveTimeRef.current = Date.now();
-
-          if (absDeg >= MIN_MOVE_TO_START) {
-            if (audioLockRef.current !== "unwind") {
-              startWind();
-            }
-
-            if (pauseTimerRef.current) {
-              clearTimeout(pauseTimerRef.current);
-              pauseTimerRef.current = null;
-            }
-          } else {
-            if (!pauseTimerRef.current) {
-              pauseTimerRef.current = setTimeout(() => {
-                if (
-                  Date.now() - lastMoveTimeRef.current >=
-                  PAUSE_STABILIZE_MS
-                ) {
-                  stopWind();
-                }
-                pauseTimerRef.current = null;
-              }, PAUSE_STABILIZE_MS);
-            }
-          }
-
-          goldAngle.value += deg;
-
-          const ENERGY_GAIN = 14;
-          energyRef.current += absDeg * ENERGY_GAIN;
-          updatePowerFromEnergy();
-
+          const GAIN = 260;
+          goldVelocity.value += deg * GAIN;
+          if (Math.abs(deg) > 0.6) playClick();
           prevAngleRef.current = ang;
         },
-
         onPanResponderRelease: () => {
-          draggingRef.current = false;
-          hadGoldTouchRef.current = false;
           prevAngleRef.current = null;
-
-          if (pauseTimerRef.current) {
-            clearTimeout(pauseTimerRef.current);
-            pauseTimerRef.current = null;
-          }
-
-          stopWind();
-
-          if (isUnwindingRef.current) {
-            // Already configured by slide-off; don't reconfigure duration.
-          } else if (energyRef.current > 10) {
-            const startE = energyRef.current;
-            isUnwindingRef.current = true;
-            unwindStartEnergyRef.current = startE;
-            unwindElapsedRef.current = 0;
-
-            const MIN_UNWIND_MS = 700;
-            const MAX_UNWIND_MS = 6500;
-            const MAX_ENERGY_FOR_DURATION = 240000;
-
-            const clamped = Math.min(MAX_ENERGY_FOR_DURATION, startE);
-            const ratio =
-              MAX_ENERGY_FOR_DURATION > 0
-                ? clamped / MAX_ENERGY_FOR_DURATION
-                : 0;
-
-            unwindDurationRef.current =
-              MIN_UNWIND_MS +
-              (MAX_UNWIND_MS - MIN_UNWIND_MS) * ratio;
-
-            startUnwindSound();
-          } else {
-            stopAllGearSounds();
-          }
-
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
-            () => {}
-          );
         },
-
         onPanResponderTerminationRequest: () => false,
-
-        onPanResponderTerminate: () => {
-          draggingRef.current = false;
-          hadGoldTouchRef.current = false;
-          prevAngleRef.current = null;
-
-          if (pauseTimerRef.current) {
-            clearTimeout(pauseTimerRef.current);
-            pauseTimerRef.current = null;
-          }
-
-          stopAllGearSounds();
-        },
       }),
     [soundOn]
   );
 
-  // -------------------------------------------------------
-  // UNWIND ENGINE
-  // -------------------------------------------------------
-  useEffect(() => {
-    const BASE_ROT = 0.06;
-    let lastTime = Date.now();
+  // ---------- Reset ----------
+  const reset = () => {
+    goldVelocity.value = 0;
+    setPower(0);
+  };
 
-    const interval = setInterval(() => {
-      const now = Date.now();
-      const dt = now - lastTime;
-      lastTime = now;
-
-      if (isUnwindingRef.current && energyRef.current > 0) {
-        const startE = unwindStartEnergyRef.current;
-        const dur = unwindDurationRef.current;
-
-        if (startE <= 0 || dur <= 0) {
-          energyRef.current = 0;
-          isUnwindingRef.current = false;
-          stopUnwindSound();
-          updatePowerFromEnergy();
-          return;
-        }
-
-        unwindElapsedRef.current += dt;
-        const progress = Math.min(1, unwindElapsedRef.current / dur);
-
-        const currentE = startE * (1 - progress);
-        energyRef.current = currentE;
-
-        const rotationStep = currentE * BASE_ROT * (dt / 16);
-        goldAngle.value += rotationStep;
-
-        updatePowerFromEnergy();
-
-        if (progress >= 1 || currentE <= 0.1) {
-          energyRef.current = 0;
-          isUnwindingRef.current = false;
-          unwindElapsedRef.current = 0;
-          stopUnwindSound();
-          updatePowerFromEnergy();
-        }
-      } else {
-        if (
-          audioLockRef.current === "unwind" &&
-          energyRef.current <= 0.1
-        ) {
-          stopUnwindSound();
-        }
-      }
-    }, 16);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // -------------------------------------------------------
-  // SAFETY WATCHDOG
-  // -------------------------------------------------------
-  useEffect(() => {
-    const watchdog = setInterval(() => {
-      if (
-        !draggingRef.current &&
-        !isUnwindingRef.current &&
-        audioLockRef.current === "wind"
-      ) {
-        stopWind();
-      }
-
-      if (
-        !isUnwindingRef.current &&
-        audioLockRef.current === "unwind" &&
-        energyRef.current <= 0.1
-      ) {
-        stopUnwindSound();
-      }
-    }, 250);
-
-    return () => clearInterval(watchdog);
-  }, []);
-
-  // -------------------------------------------------------
-  // RENDER
-  // -------------------------------------------------------
   return (
     <FullscreenWrapper>
       <View style={styles.container} {...panResponder.panHandlers}>
-        {/* HEADER – mirrored from Spinner (headerRow) */}
-        <View style={styles.headerRow}>
+        {/* Header */}
+        <View style={styles.header}>
           <BackButton />
-          <Ionicons
-            name="settings-sharp"
-            size={26}
-            color={BRAND.silver}
-            onPress={() => setSettingsVisible(true)}
-          />
+          <TouchableOpacity onPress={() => setSettingsVisible(true)}>
+            <Ionicons name="settings-sharp" size={30} color="#FDD017" />
+          </TouchableOpacity>
         </View>
 
-        {/* POWER */}
+        {/* Power Display */}
         <View style={styles.powerWrap}>
           <Animated.Text style={styles.powerLabel}>POWER</Animated.Text>
           <Animated.Text style={styles.powerValue}>{power}</Animated.Text>
         </View>
 
-        {/* GEARS */}
+        {/* Gears */}
         {gearLayout.map((gear) => (
-          <GearItem key={gear.id} gear={gear} goldAngle={goldAngle} />
+          <GearItem key={gear.id} gear={gear} />
         ))}
 
+        {/* Settings Modal */}
         <SettingsModal
           visible={settingsVisible}
           onClose={() => setSettingsVisible(false)}
@@ -781,37 +245,28 @@ export default function GearsScreen() {
   );
 }
 
-// ---------------------------------------------------------
-// STYLES
-// ---------------------------------------------------------
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#000", // gears background stays darker than spinner
-  },
-  gear: {
+  container: { flex: 1, backgroundColor: "#000" },
+  gear: { position: "absolute" },
+  header: {
     position: "absolute",
-  },
-  headerRow: {
-    position: "absolute",
-    top: 50,
-    left: 16,
-    right: 16,
+    top: 28,
+    left: 18,
+    right: 22,
     flexDirection: "row",
-    alignItems: "center",
     justifyContent: "space-between",
-    zIndex: 10,
+    zIndex: 12,
+    alignItems: "center",
   },
   powerWrap: {
     position: "absolute",
-    top: 96,
-    left: 0,
-    right: 0,
+    top: 90,
+    alignSelf: "center",
     alignItems: "center",
-    zIndex: 9,
+    zIndex: 10,
   },
   powerLabel: {
-    color: BRAND.gold,
+    color: "#FDD017",
     fontWeight: "800",
     fontSize: 18,
     letterSpacing: 1,
