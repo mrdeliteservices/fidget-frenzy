@@ -18,7 +18,7 @@ const TAP_SOUND = require("../assets/sounds/switch-click.mp3");
 
 const TAGLINES = [
   "Find your focus",
-  "Tap away your stress.",
+  "Tap away your stress",
   "Relax. Tap. Repeat.",
   "Because everyone needs a little Frenzy",
 ];
