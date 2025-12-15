@@ -5,7 +5,7 @@
 // - Drag: circular, angle-based
 // - Flick: uses horizontal velocity for stable direction
 // - Long-press brake: screech + smooth slide
-// - Engine sound: long clip with explicit duration timer
+// - Engine sound: persistent loop playback (no restart on repeated flicks)
 
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -34,6 +34,7 @@ import SettingsModal from "../../components/SettingsModal";
 import {
   preloadSounds,
   playSound,
+  playLoopPersistent,
   GlobalSoundManager,
 } from "../../lib/soundManager";
 
@@ -80,8 +81,8 @@ const CONFIG = {
   DAMPING_PER_SECOND: 0.88,
   OMEGA_STOP: 8,
 
-  FLICK_MIN_THRESHOLD: 40,          // deg/sec
-  FLICK_X_OMEGA_MULTIPLIER: 0.25,   // vx -> omega
+  FLICK_MIN_THRESHOLD: 40, // deg/sec
+  FLICK_X_OMEGA_MULTIPLIER: 0.25, // vx -> omega
 
   ENGINE_MIN_OMEGA: 550,
 
@@ -91,12 +92,6 @@ const CONFIG = {
 };
 
 const LAPS_PER_DEGREE = 1 / 360;
-
-// ====== ENGINE DURATION ======
-// Set this to match your engine clip length.
-// If your current file is ~15s → 15000.
-// If your new file is ~3.5 minutes → 210000.
-const ENGINE_CLIP_DURATION_MS = 210000;
 
 const AnimatedImage = Animated.createAnimatedComponent(Image);
 
@@ -181,15 +176,11 @@ export default function OdometerScreen() {
     soundOnRef.current = soundOn;
   }, [soundOn]);
 
-  const engineDirectionRef = useRef<1 | -1 | 0>(0);
-  const enginePlayingRef = useRef(false);
-  const engineTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tireAngle = useSharedValue(0); // degrees
+  const tireOmega = useSharedValue(0); // deg/sec
 
-  const tireAngle = useSharedValue(0);      // degrees
-  const tireOmega = useSharedValue(0);      // deg/sec
-
-  const lapProgress = useSharedValue(0);    // 0–1
-  const speedFactor = useSharedValue(0);    // 0–1
+  const lapProgress = useSharedValue(0); // 0–1
+  const speedFactor = useSharedValue(0); // 0–1
   const totalMiles = useSharedValue(0);
   const lastMileageInt = useSharedValue(0);
 
@@ -200,8 +191,8 @@ export default function OdometerScreen() {
   const dragLastTouchAngle = useSharedValue(0); // radians
 
   const isBraking = useSharedValue(false);
-  const carSpeed = useSharedValue(0);      // 0..1
-  const carDirection = useSharedValue(1);  // +1 or -1
+  const carSpeed = useSharedValue(0); // 0..1
+  const carDirection = useSharedValue(1); // +1 or -1
   const brakeStartSpeed = useSharedValue(0);
   const brakeElapsed = useSharedValue(0);
 
@@ -227,27 +218,27 @@ export default function OdometerScreen() {
     });
   }, []);
 
+  // If sound gets turned OFF, kill all active odometer sounds immediately
+  useEffect(() => {
+    if (!soundOn) {
+      try {
+        GlobalSoundManager.stop(ENGINE_ID);
+        GlobalSoundManager.stop(BRAKE_ID);
+      } catch {}
+    }
+  }, [soundOn]);
+
   useEffect(() => {
     return () => {
       try {
         GlobalSoundManager.stop(ENGINE_ID);
         GlobalSoundManager.stop(BRAKE_ID);
       } catch {}
-      if (engineTimeoutRef.current) {
-        clearTimeout(engineTimeoutRef.current);
-        engineTimeoutRef.current = null;
-      }
     };
   }, []);
 
   const stopEngine = () => {
     GlobalSoundManager.stop(ENGINE_ID);
-    enginePlayingRef.current = false;
-    engineDirectionRef.current = 0;
-    if (engineTimeoutRef.current) {
-      clearTimeout(engineTimeoutRef.current);
-      engineTimeoutRef.current = null;
-    }
   };
 
   const playBrake = async () => {
@@ -257,40 +248,17 @@ export default function OdometerScreen() {
     } catch {}
   };
 
-  // Engine: start only if not already playing
-  // We assume it's "done" after ENGINE_CLIP_DURATION_MS and reset our flag.
+  // Engine: start without restarting if it's already running
   const startEngineForDirection = async (direction: number) => {
     if (!soundOnRef.current) return;
 
-    if (enginePlayingRef.current) {
-      return;
-    }
-
-    const dir = direction >= 0 ? 1 : -1;
-    enginePlayingRef.current = true;
-    engineDirectionRef.current = dir;
-
-    // Clear any previous timer
-    if (engineTimeoutRef.current) {
-      clearTimeout(engineTimeoutRef.current);
-    }
-
-    // After the clip length, allow a restart
-    engineTimeoutRef.current = setTimeout(() => {
-      enginePlayingRef.current = false;
-      engineDirectionRef.current = 0;
-      engineTimeoutRef.current = null;
-    }, ENGINE_CLIP_DURATION_MS);
+    // direction kept for future use (e.g., pitch, alternate clips)
+    const _dir = direction >= 0 ? 1 : -1;
 
     try {
-      await playSound(ENGINE_ID, ENGINE_SRC);
+      await playLoopPersistent(ENGINE_ID, ENGINE_SRC, 1.0);
     } catch {
-      // On error, allow restart on next flick
-      enginePlayingRef.current = false;
-      if (engineTimeoutRef.current) {
-        clearTimeout(engineTimeoutRef.current);
-        engineTimeoutRef.current = null;
-      }
+      // silent
     }
   };
 
@@ -327,10 +295,7 @@ export default function OdometerScreen() {
     }
 
     const absOmega = Math.abs(tireOmega.value);
-    const spinSpeed = Math.min(
-      absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED,
-      1
-    );
+    const spinSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
 
     if (isBraking.value) {
       brakeElapsed.value += dt;
@@ -426,9 +391,7 @@ export default function OdometerScreen() {
 
       if (abs > CONFIG.FLICK_MIN_THRESHOLD) {
         tireOmega.value = omegaDeg;
-        runOnJS(Haptics.impactAsync)(
-          Haptics.ImpactFeedbackStyle.Medium
-        );
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
         runOnJS(handleSpinEnd)(omegaDeg);
       }
     })
@@ -447,10 +410,7 @@ export default function OdometerScreen() {
       if (isBraking.value) return;
 
       const absOmega = Math.abs(tireOmega.value);
-      let baseSpeed = Math.min(
-        absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED,
-        1
-      );
+      let baseSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
 
       const MIN_SLIDE_SPEED = 0.35;
       if (baseSpeed < MIN_SLIDE_SPEED) {
