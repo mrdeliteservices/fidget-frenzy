@@ -1,7 +1,17 @@
 // Fidget Frenzy – Odometer v0.9-dev (A1 Scaling)
-// Engine sound: persistent loop + fade-out on slow-down (Option B)
+// MASSIVE TRACK (Proportional Scaling) + TIRE MOVED UP + CAR ON TRACK
+// Input model (stable):
+// - Drag: circular, angle-based (direct control)
+// - Flick: tangent-velocity impulse (works from any flick angle) + fallback
+// - Repeated flicks: additive impulse, clamped (prevents jerk/flip fights)
+// Audio model (stable):
+// - Engine: persistent loop (no restart spam)
+// - Engine: fades out when speed falls below threshold
+// - Brake: hard-cuts engine + plays screech
+//
+// BUGFIX: Stop audio when leaving screen (React Navigation blur) — screen may not unmount.
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -21,6 +31,7 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "@react-navigation/native";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
@@ -29,6 +40,7 @@ import {
   preloadSounds,
   playSound,
   playLoopPersistent,
+  fadeOutAndStop,
   GlobalSoundManager,
 } from "../../lib/soundManager";
 
@@ -68,27 +80,42 @@ const { height: SCREEN_H } = Dimensions.get("window");
 const BRAND = { blue: "#081A34", gold: "#FDD017", silver: "#C0C0C0" };
 
 // ------------------------------------------------------
-//  PHYSICS CONFIG
+//  PHYSICS + AUDIO CONFIG
 // ------------------------------------------------------
 const CONFIG = {
   DAMPING_PER_SECOND: 0.88,
-  OMEGA_STOP: 8,
+  OMEGA_STOP: 8, // deg/sec considered "stopped"
 
-  FLICK_MIN_THRESHOLD: 40, // deg/sec
-  FLICK_X_OMEGA_MULTIPLIER: 0.25, // vx -> omega
+  // Flick thresholds
+  FLICK_MIN_THRESHOLD: 120, // deg/sec — lower = easier flick
+  MAX_OMEGA: 1500, // clamp to prevent chaos, was 1800
 
-  ENGINE_MIN_OMEGA: 550,
+  // Engine logic thresholds
+  ENGINE_MIN_OMEGA: 550, // must exceed to start engine (rev)
+  ENGINE_AUDIO_STOP_OMEGA: 220, // fade out below this while coasting
+  ENGINE_FADE_OUT_MS: 500,
 
+  // Car mapping
   MAX_OMEGA_FOR_FULL_SPEED: 1400,
   LAPS_PER_SECOND_AT_MAX: 0.9,
   MILES_PER_SECOND_AT_MAX: 3.5,
+
+  // Flick impulse blend (kept for reference; logic below uses tangent first and vx only as fallback)
+  FLICK_TANGENT_WEIGHT: 1.0,
+  FLICK_VX_FALLBACK_WEIGHT: 0.25, // make flick a little easier, was 0.18
+  FLICK_VX_TO_DEG_PER_SEC: 0.25, // same spirit as your old vx multiplier
 };
 
 const LAPS_PER_DEGREE = 1 / 360;
 
-// Stop engine audio BEFORE full stop, but fade out so it feels natural
-const ENGINE_AUDIO_STOP_OMEGA = 220; // deg/sec (tune 180–300)
-const ENGINE_FADE_OUT_MS = 500;      // tune 350–650
+// Prevent flick math blowups when finger ends near center
+const MIN_FLICK_RADIUS_PX = 60;
+
+// Prevent accidental snap-back reversals:
+// Allow reverse only if the opposite impulse is clearly intentional.
+const REVERSAL_MIN_CURRENT_OMEGA = 140; // deg/sec: only guard when already spinning
+const REVERSAL_ALLOW_RATIO = 0.85; // opposite impulse must be >= 85% of current speed
+const REVERSAL_ALLOW_BONUS = 120; // plus extra to ensure intention
 
 const AnimatedImage = Animated.createAnimatedComponent(Image);
 
@@ -160,6 +187,11 @@ const getTrackPose = (
 
 const TRACK_AREA_HEIGHT = SCREEN_H * TRACK_AREA_SCREEN_RATIO;
 
+const clamp = (v: number, lo: number, hi: number) => {
+  "worklet";
+  return Math.max(lo, Math.min(hi, v));
+};
+
 // ======================================================
 //  COMPONENT
 // ======================================================
@@ -193,8 +225,26 @@ export default function OdometerScreen() {
   const brakeStartSpeed = useSharedValue(0);
   const brakeElapsed = useSharedValue(0);
 
-  // Avoid repeated stop/fade calls
+  // Engine audio state guard (prevents repeated fade calls)
   const engineAudioOn = useSharedValue(0); // 0 = off, 1 = on
+
+  const stopAllOdometerAudio = useCallback(() => {
+    engineAudioOn.value = 0;
+    // Stop both channels — don't await (can't in cleanup), just fire-and-forget.
+    void GlobalSoundManager.stop(ENGINE_ID);
+    void GlobalSoundManager.stop(BRAKE_ID);
+  }, []);
+
+  // ✅ CRITICAL: Stop audio when screen loses focus (navigation blur)
+  useFocusEffect(
+    useCallback(() => {
+      // on focus: do nothing special
+      return () => {
+        // on blur: stop audio immediately
+        stopAllOdometerAudio();
+      };
+    }, [stopAllOdometerAudio])
+  );
 
   // Start car at bottom of track
   useEffect(() => {
@@ -218,38 +268,28 @@ export default function OdometerScreen() {
     });
   }, []);
 
-  // If sound gets turned OFF, kill all active odometer sounds immediately (no fade)
+  // Turning sound off should immediately kill sounds
   useEffect(() => {
     if (!soundOn) {
-      try {
-        engineAudioOn.value = 0;
-        GlobalSoundManager.stop(ENGINE_ID);
-        GlobalSoundManager.stop(BRAKE_ID);
-      } catch {}
+      stopAllOdometerAudio();
     }
-  }, [soundOn]);
+  }, [soundOn, stopAllOdometerAudio]);
 
+  // If we DO unmount, also stop audio
   useEffect(() => {
     return () => {
-      try {
-        engineAudioOn.value = 0;
-        GlobalSoundManager.stop(ENGINE_ID);
-        GlobalSoundManager.stop(BRAKE_ID);
-      } catch {}
+      stopAllOdometerAudio();
     };
-  }, []);
+  }, [stopAllOdometerAudio]);
 
   const stopEngineInstant = () => {
     engineAudioOn.value = 0;
-    GlobalSoundManager.stop(ENGINE_ID);
+    void GlobalSoundManager.stop(ENGINE_ID);
   };
 
-  // Fade-out stop for natural slow-down feel (Option B)
   const stopEngineFade = () => {
     engineAudioOn.value = 0;
-    // uses the new SoundManager.fadeOutAndStop()
-    // @ts-ignore - method exists after you add it to soundManager.ts
-    GlobalSoundManager.fadeOutAndStop(ENGINE_ID, ENGINE_FADE_OUT_MS, 12);
+    void fadeOutAndStop(ENGINE_ID, CONFIG.ENGINE_FADE_OUT_MS, 12);
   };
 
   const playBrake = async () => {
@@ -259,27 +299,18 @@ export default function OdometerScreen() {
     } catch {}
   };
 
-  const startEngineForDirection = async (direction: number) => {
+  const startEngine = async () => {
     if (!soundOnRef.current) return;
-
-    // direction kept for future use
-    const _dir = direction >= 0 ? 1 : -1;
-
     engineAudioOn.value = 1;
-
     try {
       await playLoopPersistent(ENGINE_ID, ENGINE_SRC, 1.0);
-    } catch {
-      // silent
-    }
+    } catch {}
   };
 
   const handleSpinEnd = (omega: number) => {
     const abs = Math.abs(omega);
     if (abs < CONFIG.ENGINE_MIN_OMEGA) return;
-
-    const dir = omega >= 0 ? 1 : -1;
-    startEngineForDirection(dir);
+    startEngine();
   };
 
   const updateMileage = (v: number) => setMileage(v);
@@ -291,27 +322,26 @@ export default function OdometerScreen() {
     const dt = (frame.timeSincePreviousFrame ?? 0) / 1000;
     if (dt <= 0) return;
 
-    // Tire spin integration
+    // Integrate spin
     tireAngle.value += tireOmega.value * dt;
 
-    const damping = CONFIG.DAMPING_PER_SECOND;
-    tireOmega.value *= Math.pow(damping, dt);
+    // Damping
+    tireOmega.value *= Math.pow(CONFIG.DAMPING_PER_SECOND, dt);
 
     const absOmega = Math.abs(tireOmega.value);
 
-    // Fade out engine audio earlier so it doesn't roar during slow creep.
-    // Only do this when not braking and not actively dragging.
+    // Fade out engine earlier so it doesn't roar when crawling
     if (
       engineAudioOn.value === 1 &&
       !isBraking.value &&
       !isDragging.value &&
-      absOmega < ENGINE_AUDIO_STOP_OMEGA
+      absOmega < CONFIG.ENGINE_AUDIO_STOP_OMEGA
     ) {
       engineAudioOn.value = 0;
       runOnJS(stopEngineFade)();
     }
 
-    // Full stop (hard stop is fine here; audio should already be off from fade)
+    // Stop completely
     if (absOmega < CONFIG.OMEGA_STOP) {
       if (tireOmega.value !== 0) {
         tireOmega.value = 0;
@@ -321,8 +351,10 @@ export default function OdometerScreen() {
       }
     }
 
+    // Map omega -> speed
     const spinSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
 
+    // Brake decel
     if (isBraking.value) {
       brakeElapsed.value += dt;
       const t = Math.min(brakeElapsed.value / BRAKE_DURATION_SEC, 1);
@@ -342,10 +374,12 @@ export default function OdometerScreen() {
 
     speedFactor.value = carSpeed.value;
 
+    // Advance along track
     const lapsPerSec =
       CONFIG.LAPS_PER_SECOND_AT_MAX * carSpeed.value * carDirection.value;
     lapProgress.value = (lapProgress.value + lapsPerSec * dt + 1) % 1;
 
+    // Mileage
     const milesPerSec = CONFIG.MILES_PER_SECOND_AT_MAX * carSpeed.value;
     totalMiles.value += milesPerSec * dt;
 
@@ -371,13 +405,12 @@ export default function OdometerScreen() {
 
       isDragging.value = true;
 
+      // Establish baseline touch angle for drag
       const dx = e.x - TIRE_RADIUS;
       const dy = e.y - TIRE_RADIUS;
-      const angle = Math.atan2(dy, dx);
+      dragLastTouchAngle.value = Math.atan2(dy, dx);
 
-      dragLastTouchAngle.value = angle;
-
-      // Take manual control of the tire
+      // Drag should feel direct, so we take control (but we do NOT stop engine here)
       tireOmega.value = 0;
     })
     .onChange((e) => {
@@ -396,6 +429,7 @@ export default function OdometerScreen() {
 
       const deltaDeg = (delta * 180) / Math.PI;
 
+      // Manual spin / movement
       tireAngle.value += deltaDeg;
 
       const lapDelta = deltaDeg * LAPS_PER_DEGREE;
@@ -411,15 +445,67 @@ export default function OdometerScreen() {
 
       isDragging.value = false;
 
-      const vx = e.velocityX || 0;
-      const omegaDeg = vx * CONFIG.FLICK_X_OMEGA_MULTIPLIER;
-      const abs = Math.abs(omegaDeg);
+      // ---- STABLE FLICK IMPULSE (angle independent) ----
+      const dx = e.x - TIRE_RADIUS;
+      const dy = e.y - TIRE_RADIUS;
 
-      if (abs > CONFIG.FLICK_MIN_THRESHOLD) {
-        tireOmega.value = omegaDeg;
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
-        runOnJS(handleSpinEnd)(omegaDeg);
+      const r = Math.max(MIN_FLICK_RADIUS_PX, Math.sqrt(dx * dx + dy * dy));
+      const theta = Math.atan2(dy, dx);
+
+      const vx = e.velocityX || 0; // px/sec
+      const vy = e.velocityY || 0; // px/sec
+
+      // Tangent unit vector: (-sinθ, cosθ)
+      const tangentV = vx * (-Math.sin(theta)) + vy * Math.cos(theta); // px/sec
+      const omegaRad = tangentV / r;
+      const omegaTangentDeg = (omegaRad * 180) / Math.PI;
+
+      // ✅ Fallback ONLY if tangent is basically zero (prevents sign fights)
+      let omegaDeg = omegaTangentDeg;
+      if (Math.abs(omegaDeg) < 25) {
+        omegaDeg = vx * CONFIG.FLICK_VX_TO_DEG_PER_SEC;
       }
+
+      if (Math.abs(omegaDeg) < CONFIG.FLICK_MIN_THRESHOLD) return;
+
+      // Add impulse (smooth repeated flicks), clamp
+      let nextOmega = clamp(
+        tireOmega.value + omegaDeg,
+        -CONFIG.MAX_OMEGA,
+        CONFIG.MAX_OMEGA
+      );
+
+      // ✅ No accidental snap-back:
+      // If we're already spinning and this flick would reverse direction,
+      // require a *strong* opposite impulse; otherwise, damp without flipping.
+      const cur = tireOmega.value;
+      const curAbs = Math.abs(cur);
+
+      if (
+        curAbs > REVERSAL_MIN_CURRENT_OMEGA &&
+        Math.sign(nextOmega) !== Math.sign(cur)
+      ) {
+        const required = curAbs * REVERSAL_ALLOW_RATIO + REVERSAL_ALLOW_BONUS;
+
+        if (Math.abs(omegaDeg) < required) {
+          // treat as a "bad flick" that slightly slows, but doesn't reverse
+          nextOmega = clamp(
+            cur + omegaDeg * 0.25,
+            -CONFIG.MAX_OMEGA,
+            CONFIG.MAX_OMEGA
+          );
+
+          // last resort: if it still flipped, just damp current direction
+          if (Math.sign(nextOmega) !== Math.sign(cur)) {
+            nextOmega = cur * 0.85;
+          }
+        }
+      }
+
+      tireOmega.value = nextOmega;
+
+      runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+      runOnJS(handleSpinEnd)(nextOmega);
     })
     .onFinalize(() => {
       "worklet";
@@ -439,9 +525,7 @@ export default function OdometerScreen() {
       let baseSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
 
       const MIN_SLIDE_SPEED = 0.35;
-      if (baseSpeed < MIN_SLIDE_SPEED) {
-        baseSpeed = MIN_SLIDE_SPEED;
-      }
+      if (baseSpeed < MIN_SLIDE_SPEED) baseSpeed = MIN_SLIDE_SPEED;
 
       brakeStartSpeed.value = baseSpeed;
       carSpeed.value = baseSpeed;
@@ -457,12 +541,9 @@ export default function OdometerScreen() {
 
       tireOmega.value = 0;
 
-      // Brake should hard-cut engine immediately (no fade)
+      // Brake hard-cuts engine instantly
       runOnJS(stopEngineInstant)();
       runOnJS(playBrake)();
-    })
-    .onEnd(() => {
-      "worklet";
     });
 
   const combinedGesture = Gesture.Simultaneous(panGesture, brakeGesture);
@@ -589,8 +670,14 @@ export default function OdometerScreen() {
 // STYLES
 // --------------------------------------------------
 const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: "#FFFFFF" },
-  container: { flex: 1, backgroundColor: "#FFFFFF" },
+  safeArea: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  container: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
 
   headerRow: {
     marginTop: 4,
@@ -607,16 +694,26 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  mileageBlock: { alignItems: "center" },
+  mileageBlock: {
+    alignItems: "center",
+  },
   mileageText: {
     color: BRAND.gold,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 4,
   },
-  mileageLabel: { color: "rgba(0,0,0,0.5)", fontSize: 14, marginTop: 4 },
+  mileageLabel: {
+    color: "rgba(0,0,0,0.5)",
+    fontSize: 14,
+    marginTop: 4,
+  },
 
-  content: { flex: 1, alignItems: "center", justifyContent: "flex-start" },
+  content: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "flex-start",
+  },
 
   trackWrapper: {
     height: TRACK_AREA_HEIGHT,
@@ -631,7 +728,9 @@ const styles = StyleSheet.create({
     height: `${100 * TRACK_SCALE}%`,
   },
 
-  carBase: { position: "absolute" },
+  carBase: {
+    position: "absolute",
+  },
 
   tireWrapper: {
     height: SCREEN_H * (1 - TRACK_AREA_SCREEN_RATIO),
@@ -640,5 +739,8 @@ const styles = StyleSheet.create({
     marginTop: TIRE_VERTICAL_OFFSET,
   },
 
-  tireImage: { width: TIRE_SIZE, height: TIRE_SIZE },
+  tireImage: {
+    width: TIRE_SIZE,
+    height: TIRE_SIZE,
+  },
 });
