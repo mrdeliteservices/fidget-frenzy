@@ -39,6 +39,59 @@ class SoundManager {
     }
   }
 
+  /** Set volume on an active sound (0.0 - 1.0) */
+  async setVolume(id: string, volume: number) {
+    const sound = this.active.get(id);
+    if (!sound) return;
+
+    try {
+      const status = await sound.getStatusAsync();
+      if (status.isLoaded) {
+        await sound.setVolumeAsync(Math.max(0, Math.min(1, volume)));
+      }
+    } catch {
+      // silent
+    }
+  }
+
+  /**
+   * Fade out a sound over durationMs, then stop+unload it.
+   * Useful for making engine audio feel natural when slowing down.
+   */
+  async fadeOutAndStop(id: string, durationMs: number = 450, steps: number = 10) {
+    const sound = this.active.get(id);
+    if (!sound) return;
+
+    try {
+      const status = await sound.getStatusAsync();
+      if (!status.isLoaded) {
+        this.untrack(id);
+        return;
+      }
+
+      const startVol =
+        typeof status.volume === "number" ? status.volume : 1.0;
+
+      const safeSteps = Math.max(3, Math.min(30, steps));
+      const stepMs = Math.max(10, Math.floor(durationMs / safeSteps));
+
+      for (let i = 1; i <= safeSteps; i++) {
+        const v = startVol * (1 - i / safeSteps);
+        try {
+          await sound.setVolumeAsync(Math.max(0, v));
+        } catch {
+          // silent
+        }
+        await new Promise((res) => setTimeout(res, stepMs));
+      }
+    } catch {
+      // silent
+    }
+
+    // Always finish with a real stop/unload to prevent lingering audio resources.
+    await this.stop(id);
+  }
+
   /**
    * Play a loop WITHOUT restarting if it already exists.
    * - If already playing: do nothing
@@ -159,6 +212,17 @@ export const playLoopPersistent = async (
   src: AVPlaybackSource,
   volume: number = 1.0
 ) => GlobalSoundManager.playLoopPersistent(id, src, volume);
+
+/** NEW helper: fade out and stop */
+export const fadeOutAndStop = async (
+  id: string,
+  durationMs: number = 450,
+  steps: number = 10
+) => GlobalSoundManager.fadeOutAndStop(id, durationMs, steps);
+
+/** NEW helper: set volume */
+export const setSoundVolume = async (id: string, volume: number) =>
+  GlobalSoundManager.setVolume(id, volume);
 
 /** Silent preload — no logs EVER */
 export const preloadSounds = async (sounds: Record<string, AVPlaybackSource>) => {

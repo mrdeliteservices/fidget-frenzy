@@ -1,11 +1,5 @@
 // Fidget Frenzy – Odometer v0.9-dev (A1 Scaling)
-// MASSIVE TRACK (Proportional Scaling) + TIRE MOVED UP + CAR ON TRACK
-// Single-source rotational model:
-// - Tire + car driven by finger angle around tire center
-// - Drag: circular, angle-based
-// - Flick: uses horizontal velocity for stable direction
-// - Long-press brake: screech + smooth slide
-// - Engine sound: persistent loop playback (no restart on repeated flicks)
+// Engine sound: persistent loop + fade-out on slow-down (Option B)
 
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -64,8 +58,7 @@ const CAR_SRC = require("../../assets/odometer/car_red.png");
 const TIRE_SRC = require("../../assets/odometer/tire.png");
 
 const ENGINE_ID = "race-car";
-// This should be your long rev clip (or race-car.mp3 replaced with it)
-const ENGINE_SRC = require("../../assets/sounds/race-car.mp3");
+const ENGINE_SRC = require("../../assets/sounds/race-car-long.mp3");
 
 const BRAKE_ID = "race-car-brake";
 const BRAKE_SRC = require("../../assets/sounds/race-car-brake.mp3");
@@ -92,6 +85,10 @@ const CONFIG = {
 };
 
 const LAPS_PER_DEGREE = 1 / 360;
+
+// Stop engine audio BEFORE full stop, but fade out so it feels natural
+const ENGINE_AUDIO_STOP_OMEGA = 220; // deg/sec (tune 180–300)
+const ENGINE_FADE_OUT_MS = 500;      // tune 350–650
 
 const AnimatedImage = Animated.createAnimatedComponent(Image);
 
@@ -196,6 +193,9 @@ export default function OdometerScreen() {
   const brakeStartSpeed = useSharedValue(0);
   const brakeElapsed = useSharedValue(0);
 
+  // Avoid repeated stop/fade calls
+  const engineAudioOn = useSharedValue(0); // 0 = off, 1 = on
+
   // Start car at bottom of track
   useEffect(() => {
     let maxY = -999;
@@ -218,10 +218,11 @@ export default function OdometerScreen() {
     });
   }, []);
 
-  // If sound gets turned OFF, kill all active odometer sounds immediately
+  // If sound gets turned OFF, kill all active odometer sounds immediately (no fade)
   useEffect(() => {
     if (!soundOn) {
       try {
+        engineAudioOn.value = 0;
         GlobalSoundManager.stop(ENGINE_ID);
         GlobalSoundManager.stop(BRAKE_ID);
       } catch {}
@@ -231,14 +232,24 @@ export default function OdometerScreen() {
   useEffect(() => {
     return () => {
       try {
+        engineAudioOn.value = 0;
         GlobalSoundManager.stop(ENGINE_ID);
         GlobalSoundManager.stop(BRAKE_ID);
       } catch {}
     };
   }, []);
 
-  const stopEngine = () => {
+  const stopEngineInstant = () => {
+    engineAudioOn.value = 0;
     GlobalSoundManager.stop(ENGINE_ID);
+  };
+
+  // Fade-out stop for natural slow-down feel (Option B)
+  const stopEngineFade = () => {
+    engineAudioOn.value = 0;
+    // uses the new SoundManager.fadeOutAndStop()
+    // @ts-ignore - method exists after you add it to soundManager.ts
+    GlobalSoundManager.fadeOutAndStop(ENGINE_ID, ENGINE_FADE_OUT_MS, 12);
   };
 
   const playBrake = async () => {
@@ -248,12 +259,13 @@ export default function OdometerScreen() {
     } catch {}
   };
 
-  // Engine: start without restarting if it's already running
   const startEngineForDirection = async (direction: number) => {
     if (!soundOnRef.current) return;
 
-    // direction kept for future use (e.g., pitch, alternate clips)
+    // direction kept for future use
     const _dir = direction >= 0 ? 1 : -1;
+
+    engineAudioOn.value = 1;
 
     try {
       await playLoopPersistent(ENGINE_ID, ENGINE_SRC, 1.0);
@@ -285,16 +297,30 @@ export default function OdometerScreen() {
     const damping = CONFIG.DAMPING_PER_SECOND;
     tireOmega.value *= Math.pow(damping, dt);
 
-    if (Math.abs(tireOmega.value) < CONFIG.OMEGA_STOP) {
+    const absOmega = Math.abs(tireOmega.value);
+
+    // Fade out engine audio earlier so it doesn't roar during slow creep.
+    // Only do this when not braking and not actively dragging.
+    if (
+      engineAudioOn.value === 1 &&
+      !isBraking.value &&
+      !isDragging.value &&
+      absOmega < ENGINE_AUDIO_STOP_OMEGA
+    ) {
+      engineAudioOn.value = 0;
+      runOnJS(stopEngineFade)();
+    }
+
+    // Full stop (hard stop is fine here; audio should already be off from fade)
+    if (absOmega < CONFIG.OMEGA_STOP) {
       if (tireOmega.value !== 0) {
         tireOmega.value = 0;
-        runOnJS(stopEngine)();
+        runOnJS(stopEngineInstant)();
       } else {
         tireOmega.value = 0;
       }
     }
 
-    const absOmega = Math.abs(tireOmega.value);
     const spinSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
 
     if (isBraking.value) {
@@ -351,7 +377,7 @@ export default function OdometerScreen() {
 
       dragLastTouchAngle.value = angle;
 
-      // Take manual control of the tire, don't kill engine here.
+      // Take manual control of the tire
       tireOmega.value = 0;
     })
     .onChange((e) => {
@@ -431,7 +457,8 @@ export default function OdometerScreen() {
 
       tireOmega.value = 0;
 
-      runOnJS(stopEngine)();
+      // Brake should hard-cut engine immediately (no fade)
+      runOnJS(stopEngineInstant)();
       runOnJS(playBrake)();
     })
     .onEnd(() => {
@@ -547,7 +574,7 @@ export default function OdometerScreen() {
               brakeElapsed.value = 0;
 
               setMileage(0);
-              stopEngine();
+              stopEngineInstant();
             }}
             soundOn={soundOn}
             setSoundOn={setSoundOn}
@@ -562,14 +589,8 @@ export default function OdometerScreen() {
 // STYLES
 // --------------------------------------------------
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
-  container: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
+  safeArea: { flex: 1, backgroundColor: "#FFFFFF" },
+  container: { flex: 1, backgroundColor: "#FFFFFF" },
 
   headerRow: {
     marginTop: 4,
@@ -586,26 +607,16 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
 
-  mileageBlock: {
-    alignItems: "center",
-  },
+  mileageBlock: { alignItems: "center" },
   mileageText: {
     color: BRAND.gold,
     fontSize: 28,
     fontWeight: "800",
     letterSpacing: 4,
   },
-  mileageLabel: {
-    color: "rgba(0,0,0,0.5)",
-    fontSize: 14,
-    marginTop: 4,
-  },
+  mileageLabel: { color: "rgba(0,0,0,0.5)", fontSize: 14, marginTop: 4 },
 
-  content: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "flex-start",
-  },
+  content: { flex: 1, alignItems: "center", justifyContent: "flex-start" },
 
   trackWrapper: {
     height: TRACK_AREA_HEIGHT,
@@ -620,9 +631,7 @@ const styles = StyleSheet.create({
     height: `${100 * TRACK_SCALE}%`,
   },
 
-  carBase: {
-    position: "absolute",
-  },
+  carBase: { position: "absolute" },
 
   tireWrapper: {
     height: SCREEN_H * (1 - TRACK_AREA_SCREEN_RATIO),
@@ -631,8 +640,5 @@ const styles = StyleSheet.create({
     marginTop: TIRE_VERTICAL_OFFSET,
   },
 
-  tireImage: {
-    width: TIRE_SIZE,
-    height: TIRE_SIZE,
-  },
+  tireImage: { width: TIRE_SIZE, height: TIRE_SIZE },
 });
