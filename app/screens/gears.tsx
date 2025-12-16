@@ -3,7 +3,6 @@ import {
   View,
   Text,
   StyleSheet,
-  Image,
   Animated,
   Easing,
   Pressable,
@@ -13,19 +12,16 @@ import { Audio } from "expo-av";
 type SoundKey = "click" | "winding" | "unwinding";
 
 export default function Gears() {
-  // Spin grows continuously: 0 -> 1 -> 2 -> ...
   const spin = useRef(new Animated.Value(0)).current;
 
-  // Labels only
   const [isRunning, setIsRunning] = useState(true);
   const [direction, setDirection] = useState<1 | -1>(1);
 
-  // Internal refs
   const isRunningRef = useRef(true);
   const isMountedRef = useRef(true);
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  // ---- Audio (Rung 4B) ----
+  // ---- Audio ----
   const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
     click: null,
     winding: null,
@@ -36,13 +32,10 @@ export default function Gears() {
   const safePlay = useCallback(async (key: SoundKey) => {
     const s = soundsRef.current[key];
     if (!audioReadyRef.current || !s) return;
-
     try {
       await s.setPositionAsync(0);
       await s.playAsync();
-    } catch (e) {
-      console.log(`SOUND PLAY FAILED (${key})`, e);
-    }
+    } catch {}
   }, []);
 
   const stopNative = useCallback(() => {
@@ -80,7 +73,6 @@ export default function Gears() {
   const pause = useCallback(() => {
     isRunningRef.current = false;
     stopNative();
-
     spin.stopAnimation((v) => {
       if (Number.isFinite(v)) spin.setValue(v);
     });
@@ -89,7 +81,6 @@ export default function Gears() {
   const resume = useCallback(() => {
     isRunningRef.current = true;
     stopNative();
-
     spin.stopAnimation((v) => {
       const from = Number.isFinite(v) ? v : 0;
       spin.setValue(from);
@@ -97,7 +88,6 @@ export default function Gears() {
     });
   }, [spin, startCycleFrom, stopNative]);
 
-  // Load/unload audio once per mount
   useEffect(() => {
     isMountedRef.current = true;
     isRunningRef.current = true;
@@ -115,12 +105,10 @@ export default function Gears() {
           require("../../assets/sounds/gear-click.mp3"),
           { shouldPlay: false, volume: 1.0 }
         );
-
         const winding = await Audio.Sound.createAsync(
           require("../../assets/sounds/gear-winding.mp3"),
           { shouldPlay: false, volume: 1.0 }
         );
-
         const unwinding = await Audio.Sound.createAsync(
           require("../../assets/sounds/gear-unwinding.mp3"),
           { shouldPlay: false, volume: 1.0 }
@@ -136,10 +124,8 @@ export default function Gears() {
         soundsRef.current.click = click.sound;
         soundsRef.current.winding = winding.sound;
         soundsRef.current.unwinding = unwinding.sound;
-
         audioReadyRef.current = true;
-      } catch (e) {
-        console.log("GEARS AUDIO LOAD FAILED", e);
+      } catch {
         audioReadyRef.current = false;
         soundsRef.current.click = null;
         soundsRef.current.winding = null;
@@ -147,7 +133,6 @@ export default function Gears() {
       }
     })();
 
-    // Start animation on mount
     resume();
 
     return () => {
@@ -162,13 +147,11 @@ export default function Gears() {
       (async () => {
         try {
           audioReadyRef.current = false;
-
           const { click, winding, unwinding } = soundsRef.current;
           if (click) await click.unloadAsync();
           if (winding) await winding.unloadAsync();
           if (unwinding) await unwinding.unloadAsync();
         } catch {
-          // ignore
         } finally {
           soundsRef.current.click = null;
           soundsRef.current.winding = null;
@@ -178,14 +161,31 @@ export default function Gears() {
     };
   }, [resume, spin, stopNative]);
 
-  // ---------------- RUNG 5: Second gear rotation ----------------
-  // Gear ratio illusion: small spins faster than large
-  const SMALL_RATIO = 1.8;
+  // ---------------- RUNG 6: Mesh Tuner ----------------
+  // Large gear placement
+  const LARGE_W = 260;
+  const LARGE_H = 260;
+  const LARGE_X = -60;
+  const LARGE_Y = -20;
+
+  // Small gear placement (TUNE THESE)
+  const SMALL_W = 170;
+  const SMALL_H = 170;
+
+  // Start with a better “tangent” guess:
+  // distance ≈ (LARGE_W/2 + SMALL_W/2) - overlapFudge
+  // We'll tune by eye.
+  const SMALL_X = 120; // try 85, 95, 105...
+  const SMALL_Y = 60; // try 45, 55, 65...
+
+  // Gear ratio (TUNE THIS)
+  // Roughly proportional to radii: (LARGE_W/2) / (SMALL_W/2) = LARGE_W/SMALL_W
+  // 260/170 ≈ 1.529
+  const SMALL_RATIO = 1.60;
 
   const rotateLarge = useMemo(() => {
     const outputRange =
       direction === 1 ? ["0deg", "360deg"] : ["0deg", "-360deg"];
-
     return spin.interpolate({
       inputRange: [0, 1],
       outputRange,
@@ -194,12 +194,9 @@ export default function Gears() {
   }, [spin, direction]);
 
   const rotateSmall = useMemo(() => {
-    // Small gear rotates opposite direction of large + faster ratio
     const ratioSpin = Animated.multiply(spin, SMALL_RATIO);
-
     const outputRange =
       direction === 1 ? ["0deg", "-360deg"] : ["0deg", "360deg"];
-
     return ratioSpin.interpolate({
       inputRange: [0, 1],
       outputRange,
@@ -210,8 +207,6 @@ export default function Gears() {
   const onToggleRun = useCallback(() => {
     setIsRunning((prev) => {
       const next = !prev;
-
-      // Discrete audio only
       if (next) {
         void safePlay("winding");
         resume();
@@ -219,7 +214,6 @@ export default function Gears() {
         void safePlay("unwinding");
         pause();
       }
-
       return next;
     });
   }, [pause, resume, safePlay]);
@@ -228,6 +222,11 @@ export default function Gears() {
     void safePlay("click");
     setDirection((prev) => (prev === 1 ? -1 : 1));
   }, [safePlay]);
+
+  // Visual “contact point” helper (optional)
+  // We'll put a small dot where the centers would “touch” if tangent.
+  const contactX = LARGE_X + LARGE_W / 2 + (SMALL_X - (SMALL_W / 2));
+  const contactY = LARGE_Y + LARGE_H / 2 + (SMALL_Y - (SMALL_H / 2));
 
   return (
     <View style={styles.container}>
@@ -238,39 +237,45 @@ export default function Gears() {
         onPress={onToggleRun}
         onLongPress={onToggleDirection}
       >
-        {/* Large gear */}
         <Animated.Image
           source={require("../../assets/gears/gear_silver_large.png")}
           resizeMode="contain"
           style={[
             styles.img,
             {
-              width: 260,
-              height: 260,
+              width: LARGE_W,
+              height: LARGE_H,
               transform: [
-                { translateX: -60 },
-                { translateY: -20 },
+                { translateX: LARGE_X },
+                { translateY: LARGE_Y },
                 { rotate: rotateLarge },
               ],
             },
           ]}
         />
 
-        {/* Small gear: now rotates opposite + faster (Rung 5) */}
         <Animated.Image
           source={require("../../assets/gears/gear_silver_small.png")}
           resizeMode="contain"
           style={[
             styles.img,
             {
-              width: 170,
-              height: 170,
+              width: SMALL_W,
+              height: SMALL_H,
               transform: [
-                { translateX: 70 },
-                { translateY: 60 },
+                { translateX: SMALL_X },
+                { translateY: SMALL_Y },
                 { rotate: rotateSmall },
               ],
             },
+          ]}
+        />
+
+        {/* Contact point helper */}
+        <View
+          style={[
+            styles.dot,
+            { transform: [{ translateX: contactX }, { translateY: contactY }] },
           ]}
         />
 
@@ -279,14 +284,16 @@ export default function Gears() {
             Tap: {isRunning ? "Pause" : "Resume"} • Long-press: Reverse
           </Text>
           <Text style={styles.overlayTextSmall}>
-            Status: {isRunning ? "Running" : "Paused"} • Direction:{" "}
-            {direction === 1 ? "CW" : "CCW"} • Small ratio: {SMALL_RATIO}x
+            Dir: {direction === 1 ? "CW" : "CCW"} • Ratio: {SMALL_RATIO.toFixed(2)}
+          </Text>
+          <Text style={styles.overlayTextSmall}>
+            Small XY: {SMALL_X},{SMALL_Y} • Large XY: {LARGE_X},{LARGE_Y}
           </Text>
         </View>
       </Pressable>
 
       <Text style={styles.hint}>
-        Rung 5: second gear rotates opposite direction (faster ratio)
+        Rung 6: tune SMALL_X / SMALL_Y / SMALL_RATIO until it “meshes”
       </Text>
     </View>
   );
@@ -315,6 +322,13 @@ const styles = StyleSheet.create({
   },
   img: {
     position: "absolute",
+  },
+  dot: {
+    position: "absolute",
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "rgba(255,255,255,0.6)",
   },
   overlay: {
     position: "absolute",
