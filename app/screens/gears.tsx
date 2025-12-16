@@ -10,80 +10,110 @@ import {
 } from "react-native";
 
 export default function Gears() {
-  // One animated value for ONE gear
+  // Spin grows continuously: 0 -> 1 -> 2 -> ...
   const spin = useRef(new Animated.Value(0)).current;
 
-  // Interaction state (Rung 3)
+  // Labels only
   const [isRunning, setIsRunning] = useState(true);
   const [direction, setDirection] = useState<1 | -1>(1);
 
-  // Keep the current progress so resume continues smoothly
-  const progressRef = useRef(0);
-  const loopRef = useRef<Animated.CompositeAnimation | null>(null);
+  // Internal refs (truth source for callbacks)
+  const isRunningRef = useRef(true);
+  const isMountedRef = useRef(true);
+  const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  const startLoop = useCallback(() => {
-    // Start from current progress and loop forever.
-    // We animate from current value -> 1, then loop resets to 0.
-    loopRef.current = Animated.loop(
-      Animated.timing(spin, {
-        toValue: 1,
+  const stopNative = useCallback(() => {
+    animRef.current?.stop();
+    animRef.current = null;
+  }, []);
+
+  const startCycleFrom = useCallback(
+    (fromValue: number) => {
+      if (!isMountedRef.current) return;
+      if (!isRunningRef.current) return;
+
+      // Always normalize to a finite number
+      const from = Number.isFinite(fromValue) ? fromValue : 0;
+      const to = from + 1;
+
+      // Ensure the animated value is exactly where we think it is
+      spin.setValue(from);
+
+      const a = Animated.timing(spin, {
+        toValue: to,
         duration: 6000,
         easing: Easing.linear,
         useNativeDriver: true,
-      })
-    );
-    loopRef.current.start();
-  }, [spin]);
+      });
 
-  const stopLoop = useCallback(() => {
-    // Stop the running loop and capture current position for smooth resume
-    loopRef.current?.stop();
-    loopRef.current = null;
+      animRef.current = a;
 
-    spin.stopAnimation((value) => {
-      // Value is between 0 and 1 (ish). Keep it bounded.
-      const bounded = ((value % 1) + 1) % 1;
-      progressRef.current = bounded;
-      spin.setValue(bounded);
+      a.start(({ finished }) => {
+        if (!finished) return;
+        // Chain next turn from the end of this one
+        startCycleFrom(to);
+      });
+    },
+    [spin]
+  );
+
+  const pause = useCallback(() => {
+    isRunningRef.current = false;
+    stopNative();
+
+    // Capture exact value at pause
+    spin.stopAnimation((v) => {
+      // keep it set to the paused value
+      if (Number.isFinite(v)) spin.setValue(v);
     });
-  }, [spin]);
+  }, [spin, stopNative]);
+
+  const resume = useCallback(() => {
+    isRunningRef.current = true;
+    stopNative();
+
+    // IMPORTANT: read actual current value from native driver, then restart from there
+    spin.stopAnimation((v) => {
+      const from = Number.isFinite(v) ? v : 0;
+      spin.setValue(from);
+      startCycleFrom(from);
+    });
+  }, [spin, startCycleFrom, stopNative]);
 
   useEffect(() => {
-    // On mount, start running
-    spin.setValue(progressRef.current);
-    startLoop();
+    isMountedRef.current = true;
+    isRunningRef.current = true;
 
-    // Clean unmount
+    // Start at 0 on mount
+    resume();
+
     return () => {
-      loopRef.current?.stop();
-      loopRef.current = null;
+      isMountedRef.current = false;
+      isRunningRef.current = false;
+      stopNative();
       spin.stopAnimation();
     };
-  }, [spin, startLoop]);
-
-  // When isRunning changes, start/stop (no audio, no extra effects)
-  useEffect(() => {
-    if (isRunning) {
-      // Ensure the animated value resumes from saved progress
-      spin.setValue(progressRef.current);
-      startLoop();
-    } else {
-      stopLoop();
-    }
-  }, [isRunning, spin, startLoop, stopLoop]);
+  }, [resume, spin, stopNative]);
 
   const rotate = useMemo(() => {
-    const output =
+    const outputRange =
       direction === 1 ? ["0deg", "360deg"] : ["0deg", "-360deg"];
+
     return spin.interpolate({
       inputRange: [0, 1],
-      outputRange: output,
+      outputRange,
+      extrapolate: "extend",
     });
   }, [spin, direction]);
 
   const onToggleRun = useCallback(() => {
-    setIsRunning((prev) => !prev);
-  }, []);
+    setIsRunning((prev) => {
+      const next = !prev;
+      if (next) resume();
+      else pause();
+      return next;
+    });
+  }, [pause, resume]);
 
   const onToggleDirection = useCallback(() => {
     setDirection((prev) => (prev === 1 ? -1 : 1));
@@ -98,25 +128,34 @@ export default function Gears() {
         onPress={onToggleRun}
         onLongPress={onToggleDirection}
       >
-        {/* RUNG 3:
-            - Tap = pause/resume
-            - Long-press = reverse direction
-            - No audio
-        */}
         <Animated.Image
           source={require("../../assets/gears/gear_silver_large.png")}
+          resizeMode="contain"
           style={[
             styles.img,
-            styles.large,
-            { transform: [{ rotate }, ...styles.large.transform] },
+            {
+              width: 260,
+              height: 260,
+              transform: [
+                { translateX: -60 },
+                { translateY: -20 },
+                { rotate },
+              ],
+            },
           ]}
-          resizeMode="contain"
         />
 
         <Image
           source={require("../../assets/gears/gear_silver_small.png")}
-          style={[styles.img, styles.small]}
           resizeMode="contain"
+          style={[
+            styles.img,
+            {
+              width: 170,
+              height: 170,
+              transform: [{ translateX: 70 }, { translateY: 60 }],
+            },
+          ]}
         />
 
         <View style={styles.overlay}>
@@ -156,21 +195,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
-
   img: {
     position: "absolute",
   },
-  large: {
-    width: 260,
-    height: 260,
-    transform: [{ translateX: -60 }, { translateY: -20 }],
-  },
-  small: {
-    width: 170,
-    height: 170,
-    transform: [{ translateX: 70 }, { translateY: 60 }],
-  },
-
   overlay: {
     position: "absolute",
     left: 12,
@@ -191,7 +218,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
   },
-
   hint: {
     color: "#C9C9D6",
     marginTop: 12,
