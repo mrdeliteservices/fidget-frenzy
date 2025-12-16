@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, Text, StyleSheet, Image } from "react-native";
 
 export default function Gears() {
   return (
@@ -7,13 +7,26 @@ export default function Gears() {
       <Text style={styles.title}>Gears</Text>
 
       <View style={styles.stage}>
-        {/* RUNG 1: Static layout ONLY.
-            No animations. No audio. No timers. */}
-        <View style={[styles.gear, styles.gearLarge]} />
-        <View style={[styles.gear, styles.gearSmall]} />
+        {/* RUNG 1.5: Static images ONLY.
+            - No animations
+            - No audio
+            - No timers
+            - No useEffect
+        */}
+        <Image
+          source={require("../../assets/gears/gear_silver_large.png")}
+          style={[styles.img, styles.large]}
+          resizeMode="contain"
+        />
+
+        <Image
+          source={require("../../assets/gears/gear_silver_small.png")}
+          style={[styles.img, styles.small]}
+          resizeMode="contain"
+        />
       </View>
 
-      <Text style={styles.hint}>Rung 1: static layout</Text>
+      <Text style={styles.hint}>Rung 1.5: static gear images</Text>
     </View>
   );
 }
@@ -39,25 +52,22 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     overflow: "hidden",
   },
-  gear: {
+
+  // Images
+  img: {
     position: "absolute",
-    borderRadius: 999,
-    borderWidth: 10,
-    borderColor: "#A7A7B5",
-    backgroundColor: "transparent",
-    opacity: 0.9,
   },
-  gearLarge: {
-    width: 220,
-    height: 220,
+  large: {
+    width: 260,
+    height: 260,
     transform: [{ translateX: -60 }, { translateY: -20 }],
   },
-  gearSmall: {
-    width: 140,
-    height: 140,
+  small: {
+    width: 170,
+    height: 170,
     transform: [{ translateX: 70 }, { translateY: 60 }],
-    borderColor: "#7F7F93",
   },
+
   hint: {
     color: "#C9C9D6",
     marginTop: 12,
