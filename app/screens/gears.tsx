@@ -10,6 +10,8 @@ import {
 } from "react-native";
 import { Audio } from "expo-av";
 
+type SoundKey = "click" | "winding" | "unwinding";
+
 export default function Gears() {
   // Spin grows continuously: 0 -> 1 -> 2 -> ...
   const spin = useRef(new Animated.Value(0)).current;
@@ -23,19 +25,24 @@ export default function Gears() {
   const isMountedRef = useRef(true);
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  // ---- Audio (Rung 4A): click only ----
-  const clickSoundRef = useRef<Audio.Sound | null>(null);
+  // ---- Audio (Rung 4B): click + winding + unwinding ----
+  const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
+    click: null,
+    winding: null,
+    unwinding: null,
+  });
   const audioReadyRef = useRef(false);
 
-  const safePlayClick = useCallback(async () => {
-    const s = clickSoundRef.current;
+  const safePlay = useCallback(async (key: SoundKey) => {
+    const s = soundsRef.current[key];
     if (!audioReadyRef.current || !s) return;
 
     try {
+      // Reliable replay in Expo Go: seek to 0 then play
       await s.setPositionAsync(0);
       await s.playAsync();
     } catch (e) {
-      console.log("CLICK PLAY FAILED", e);
+      console.log(`SOUND PLAY FAILED (${key})`, e);
     }
   }, []);
 
@@ -91,6 +98,7 @@ export default function Gears() {
     });
   }, [spin, startCycleFrom, stopNative]);
 
+  // Load/unload audio once per mount
   useEffect(() => {
     isMountedRef.current = true;
     isRunningRef.current = true;
@@ -104,24 +112,40 @@ export default function Gears() {
           playsInSilentModeIOS: true,
         });
 
-        const { sound } = await Audio.Sound.createAsync(
+        const click = await Audio.Sound.createAsync(
           require("../../assets/sounds/gear-click.mp3"),
           { shouldPlay: false, volume: 1.0 }
         );
 
+        const winding = await Audio.Sound.createAsync(
+          require("../../assets/sounds/gear-winding.mp3"),
+          { shouldPlay: false, volume: 1.0 }
+        );
+
+        const unwinding = await Audio.Sound.createAsync(
+          require("../../assets/sounds/gear-unwinding.mp3"),
+          { shouldPlay: false, volume: 1.0 }
+        );
+
         if (cancelled) {
-          await sound.unloadAsync();
+          await click.sound.unloadAsync();
+          await winding.sound.unloadAsync();
+          await unwinding.sound.unloadAsync();
           return;
         }
 
-        clickSoundRef.current = sound;
-        audioReadyRef.current = true;
+        soundsRef.current.click = click.sound;
+        soundsRef.current.winding = winding.sound;
+        soundsRef.current.unwinding = unwinding.sound;
 
-        console.log("CLICK SOUND LOADED OK");
+        audioReadyRef.current = true;
+        console.log("GEARS SOUNDS LOADED OK");
       } catch (e) {
-        console.log("AUDIO LOAD FAILED", e);
+        console.log("GEARS AUDIO LOAD FAILED", e);
         audioReadyRef.current = false;
-        clickSoundRef.current = null;
+        soundsRef.current.click = null;
+        soundsRef.current.winding = null;
+        soundsRef.current.unwinding = null;
       }
     })();
 
@@ -140,13 +164,18 @@ export default function Gears() {
       (async () => {
         try {
           audioReadyRef.current = false;
-          if (clickSoundRef.current) {
-            await clickSoundRef.current.unloadAsync();
-          }
+
+          const { click, winding, unwinding } = soundsRef.current;
+
+          if (click) await click.unloadAsync();
+          if (winding) await winding.unloadAsync();
+          if (unwinding) await unwinding.unloadAsync();
         } catch {
           // ignore
         } finally {
-          clickSoundRef.current = null;
+          soundsRef.current.click = null;
+          soundsRef.current.winding = null;
+          soundsRef.current.unwinding = null;
         }
       })();
     };
@@ -167,19 +196,26 @@ export default function Gears() {
     setIsRunning((prev) => {
       const next = !prev;
 
-      void safePlayClick();
-
-      if (next) resume();
-      else pause();
+      // IMPORTANT: audio is discrete-event only (tap)
+      // If going to Running -> play winding
+      // If going to Paused -> play unwinding
+      if (next) {
+        void safePlay("winding");
+        resume();
+      } else {
+        void safePlay("unwinding");
+        pause();
+      }
 
       return next;
     });
-  }, [pause, resume, safePlayClick]);
+  }, [pause, resume, safePlay]);
 
   const onToggleDirection = useCallback(() => {
-    void safePlayClick();
+    // Reverse direction + click (discrete long-press)
+    void safePlay("click");
     setDirection((prev) => (prev === 1 ? -1 : 1));
-  }, [safePlayClick]);
+  }, [safePlay]);
 
   return (
     <View style={styles.container}>
@@ -232,7 +268,7 @@ export default function Gears() {
       </Pressable>
 
       <Text style={styles.hint}>
-        Rung 4A: click audio on tap/long-press only (no audio in loops)
+        Rung 4B: winding on resume, unwinding on pause, click on reverse
       </Text>
     </View>
   );
