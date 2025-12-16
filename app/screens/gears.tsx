@@ -25,7 +25,7 @@ export default function Gears() {
   const isMountedRef = useRef(true);
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  // ---- Audio (Rung 4B): click + winding + unwinding ----
+  // ---- Audio (Rung 4B) ----
   const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
     click: null,
     winding: null,
@@ -38,7 +38,6 @@ export default function Gears() {
     if (!audioReadyRef.current || !s) return;
 
     try {
-      // Reliable replay in Expo Go: seek to 0 then play
       await s.setPositionAsync(0);
       await s.playAsync();
     } catch (e) {
@@ -139,7 +138,6 @@ export default function Gears() {
         soundsRef.current.unwinding = unwinding.sound;
 
         audioReadyRef.current = true;
-        console.log("GEARS SOUNDS LOADED OK");
       } catch (e) {
         console.log("GEARS AUDIO LOAD FAILED", e);
         audioReadyRef.current = false;
@@ -166,7 +164,6 @@ export default function Gears() {
           audioReadyRef.current = false;
 
           const { click, winding, unwinding } = soundsRef.current;
-
           if (click) await click.unloadAsync();
           if (winding) await winding.unloadAsync();
           if (unwinding) await unwinding.unloadAsync();
@@ -181,7 +178,11 @@ export default function Gears() {
     };
   }, [resume, spin, stopNative]);
 
-  const rotate = useMemo(() => {
+  // ---------------- RUNG 5: Second gear rotation ----------------
+  // Gear ratio illusion: small spins faster than large
+  const SMALL_RATIO = 1.8;
+
+  const rotateLarge = useMemo(() => {
     const outputRange =
       direction === 1 ? ["0deg", "360deg"] : ["0deg", "-360deg"];
 
@@ -192,13 +193,25 @@ export default function Gears() {
     });
   }, [spin, direction]);
 
+  const rotateSmall = useMemo(() => {
+    // Small gear rotates opposite direction of large + faster ratio
+    const ratioSpin = Animated.multiply(spin, SMALL_RATIO);
+
+    const outputRange =
+      direction === 1 ? ["0deg", "-360deg"] : ["0deg", "360deg"];
+
+    return ratioSpin.interpolate({
+      inputRange: [0, 1],
+      outputRange,
+      extrapolate: "extend",
+    });
+  }, [spin, direction]);
+
   const onToggleRun = useCallback(() => {
     setIsRunning((prev) => {
       const next = !prev;
 
-      // IMPORTANT: audio is discrete-event only (tap)
-      // If going to Running -> play winding
-      // If going to Paused -> play unwinding
+      // Discrete audio only
       if (next) {
         void safePlay("winding");
         resume();
@@ -212,7 +225,6 @@ export default function Gears() {
   }, [pause, resume, safePlay]);
 
   const onToggleDirection = useCallback(() => {
-    // Reverse direction + click (discrete long-press)
     void safePlay("click");
     setDirection((prev) => (prev === 1 ? -1 : 1));
   }, [safePlay]);
@@ -226,6 +238,7 @@ export default function Gears() {
         onPress={onToggleRun}
         onLongPress={onToggleDirection}
       >
+        {/* Large gear */}
         <Animated.Image
           source={require("../../assets/gears/gear_silver_large.png")}
           resizeMode="contain"
@@ -237,13 +250,14 @@ export default function Gears() {
               transform: [
                 { translateX: -60 },
                 { translateY: -20 },
-                { rotate },
+                { rotate: rotateLarge },
               ],
             },
           ]}
         />
 
-        <Image
+        {/* Small gear: now rotates opposite + faster (Rung 5) */}
+        <Animated.Image
           source={require("../../assets/gears/gear_silver_small.png")}
           resizeMode="contain"
           style={[
@@ -251,7 +265,11 @@ export default function Gears() {
             {
               width: 170,
               height: 170,
-              transform: [{ translateX: 70 }, { translateY: 60 }],
+              transform: [
+                { translateX: 70 },
+                { translateY: 60 },
+                { rotate: rotateSmall },
+              ],
             },
           ]}
         />
@@ -262,13 +280,13 @@ export default function Gears() {
           </Text>
           <Text style={styles.overlayTextSmall}>
             Status: {isRunning ? "Running" : "Paused"} • Direction:{" "}
-            {direction === 1 ? "CW" : "CCW"}
+            {direction === 1 ? "CW" : "CCW"} • Small ratio: {SMALL_RATIO}x
           </Text>
         </View>
       </Pressable>
 
       <Text style={styles.hint}>
-        Rung 4B: winding on resume, unwinding on pause, click on reverse
+        Rung 5: second gear rotates opposite direction (faster ratio)
       </Text>
     </View>
   );
