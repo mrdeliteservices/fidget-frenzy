@@ -1,24 +1,54 @@
-import React from "react";
-import { View, Text, StyleSheet, Image } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { View, Text, StyleSheet, Image, Animated, Easing } from "react-native";
 
 export default function Gears() {
+  // Single animated value for ONE gear only (keep it simple for rung 2)
+  const spin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    // Reset to a known state on mount
+    spin.setValue(0);
+
+    const animation = Animated.loop(
+      Animated.timing(spin, {
+        toValue: 1,
+        duration: 6000, // tweak later; keep stable for now
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+
+    animation.start();
+
+    // Important: stop cleanly on unmount to avoid runaway native animation
+    return () => {
+      animation.stop();
+      spin.stopAnimation();
+    };
+  }, [spin]);
+
+  const rotate = spin.interpolate({
+    inputRange: [0, 1],
+    outputRange: ["0deg", "360deg"],
+  });
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Gears</Text>
 
       <View style={styles.stage}>
-        {/* RUNG 1.5: Static images ONLY.
-            - No animations
+        {/* RUNG 2:
+            - Animate ONE gear only
             - No audio
-            - No timers
-            - No useEffect
+            - No interaction
         */}
-        <Image
+        <Animated.Image
           source={require("../../assets/gears/gear_silver_large.png")}
-          style={[styles.img, styles.large]}
+          style={[styles.img, styles.large, { transform: [{ rotate }, ...styles.large.transform] }]}
           resizeMode="contain"
         />
 
+        {/* Small gear stays static for this rung */}
         <Image
           source={require("../../assets/gears/gear_silver_small.png")}
           style={[styles.img, styles.small]}
@@ -26,7 +56,7 @@ export default function Gears() {
         />
       </View>
 
-      <Text style={styles.hint}>Rung 1.5: static gear images</Text>
+      <Text style={styles.hint}>Rung 2: one gear rotates (no audio)</Text>
     </View>
   );
 }
@@ -53,10 +83,12 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  // Images
   img: {
     position: "absolute",
   },
+
+  // NOTE: We keep the translate transform here, and in the component we
+  // prepend rotate so rotation happens around the image center.
   large: {
     width: 260,
     height: 260,
