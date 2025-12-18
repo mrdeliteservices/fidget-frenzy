@@ -1,3 +1,11 @@
+// app/screens/gears.tsx
+// Fidget Frenzy — Gears (v0.9-dev)
+// ✅ Header (Back + Power + Settings)
+// ✅ Wind/unwind preserved (NO modulo/clamp; extrapolate extend)
+// ✅ Only winding/unwinding audio (no click)
+// ✅ Random gear network each mount + reset (safe layout, meshes correctly)
+// ✅ More top density: repeat small gears + stronger upward placement bias
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
@@ -5,102 +13,139 @@ import {
   StyleSheet,
   Animated,
   Easing,
-  Pressable,
+  GestureResponderEvent,
+  TouchableOpacity,
+  SafeAreaView,
+  ImageSourcePropType,
 } from "react-native";
 import { Audio } from "expo-av";
+import { Ionicons } from "@expo/vector-icons";
 
-type SoundKey = "click" | "winding" | "unwinding";
+import FullscreenWrapper from "../../components/FullscreenWrapper";
+import BackButton from "../../components/BackButton";
+import SettingsModal from "../../components/SettingsModal";
+
+type SoundKey = "winding" | "unwinding";
+type Mode = "idle" | "dragging" | "unwinding";
+
+type GearAsset = {
+  id: string;
+  source: ImageSourcePropType;
+  tier: "small" | "medium" | "large";
+};
+
+type PlacedGear = {
+  id: string;
+  source: ImageSourcePropType;
+  size: number;
+  cx: number;
+  cy: number;
+  left: number;
+  top: number;
+  // signed multiplier relative to DRIVER when direction === +1
+  mult: number;
+};
 
 export default function Gears() {
-  // Spin grows continuously: 0 -> 1 -> 2 -> ...
   const spin = useRef(new Animated.Value(0)).current;
 
-  // Labels only
-  const [isRunning, setIsRunning] = useState(true);
+  const [mode, setMode] = useState<Mode>("idle");
+  const modeRef = useRef<Mode>("idle");
   const [direction, setDirection] = useState<1 | -1>(1);
 
-  // Internal refs
-  const isRunningRef = useRef(true);
-  const isMountedRef = useRef(true);
+  // Power = how many turns away from rest (live)
+  const [power, setPower] = useState(0);
+  const restSpinRef = useRef(0);
+
   const animRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  // ---- Audio (discrete events only) ----
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [soundOn, setSoundOn] = useState(true);
+  const soundOnRef = useRef(true);
+
+  useEffect(() => {
+    soundOnRef.current = soundOn;
+  }, [soundOn]);
+
+  const setModeNow = useCallback((next: Mode) => {
+    modeRef.current = next;
+    setMode(next);
+  }, []);
+
+  // ---------------- Rotation helper (single definition) ----------------
+  const rotateForMultiplier = useCallback(
+    (baseMult: number) => {
+      const mSigned = baseMult * direction;
+      const mAbs = Math.abs(mSigned);
+
+      const value = Animated.multiply(spin, mAbs);
+      const outputRange = mSigned >= 0 ? ["0deg", "360deg"] : ["0deg", "-360deg"];
+
+      return value.interpolate({
+        inputRange: [0, 1],
+        outputRange,
+        extrapolate: "extend",
+      });
+    },
+    [direction, spin]
+  );
+
+  const rotateDriver = useMemo(() => rotateForMultiplier(1), [rotateForMultiplier]);
+
+  // ---- Audio ----
   const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
-    click: null,
     winding: null,
     unwinding: null,
   });
   const audioReadyRef = useRef(false);
 
-  const safePlay = useCallback(async (key: SoundKey) => {
+  const safeStartLoop = useCallback(async (key: SoundKey) => {
+    if (!soundOnRef.current) return;
     const s = soundsRef.current[key];
     if (!audioReadyRef.current || !s) return;
 
     try {
-      await s.setPositionAsync(0);
-      await s.playAsync();
+      const status = await s.getStatusAsync();
+      const isPlaying = (status as any)?.isPlaying === true;
+
+      await s.setIsLoopingAsync(true);
+      if (!isPlaying) {
+        await s.setPositionAsync(0);
+        await s.playAsync();
+      }
     } catch {
-      // Never crash because of audio
+      // ignore
     }
   }, []);
 
+  const safeStop = useCallback(async (key: SoundKey) => {
+    const s = soundsRef.current[key];
+    if (!audioReadyRef.current || !s) return;
+
+    try {
+      await s.stopAsync();
+      await s.setIsLoopingAsync(false);
+      await s.setPositionAsync(0);
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // ---- Animation controls ----
   const stopNative = useCallback(() => {
     animRef.current?.stop();
     animRef.current = null;
   }, []);
 
-  const startCycleFrom = useCallback(
-    (fromValue: number) => {
-      if (!isMountedRef.current) return;
-      if (!isRunningRef.current) return;
-
-      const from = Number.isFinite(fromValue) ? fromValue : 0;
-      const to = from + 1;
-
-      spin.setValue(from);
-
-      const a = Animated.timing(spin, {
-        toValue: to,
-        duration: 6000,
-        easing: Easing.linear,
-        useNativeDriver: true,
-      });
-
-      animRef.current = a;
-
-      a.start(({ finished }) => {
-        if (!finished) return;
-        startCycleFrom(to);
-      });
-    },
-    [spin]
-  );
-
   const pause = useCallback(() => {
-    isRunningRef.current = false;
     stopNative();
-
     spin.stopAnimation((v) => {
       if (Number.isFinite(v)) spin.setValue(v);
     });
   }, [spin, stopNative]);
 
-  const resume = useCallback(() => {
-    isRunningRef.current = true;
-    stopNative();
-
-    spin.stopAnimation((v) => {
-      const from = Number.isFinite(v) ? v : 0;
-      spin.setValue(from);
-      startCycleFrom(from);
-    });
-  }, [spin, startCycleFrom, stopNative]);
-
-  // Load/unload audio once per mount
+  // ---- Audio load/unload ----
   useEffect(() => {
-    isMountedRef.current = true;
-    isRunningRef.current = true;
-
     let cancelled = false;
 
     (async () => {
@@ -110,49 +155,39 @@ export default function Gears() {
           playsInSilentModeIOS: true,
         });
 
-        const click = await Audio.Sound.createAsync(
-          require("../../assets/sounds/gear-click.mp3"),
-          { shouldPlay: false, volume: 1.0 }
-        );
-
         const winding = await Audio.Sound.createAsync(
           require("../../assets/sounds/gear-winding.mp3"),
           { shouldPlay: false, volume: 1.0 }
         );
-
         const unwinding = await Audio.Sound.createAsync(
           require("../../assets/sounds/gear-unwinding.mp3"),
           { shouldPlay: false, volume: 1.0 }
         );
 
         if (cancelled) {
-          await click.sound.unloadAsync();
           await winding.sound.unloadAsync();
           await unwinding.sound.unloadAsync();
           return;
         }
 
-        soundsRef.current.click = click.sound;
         soundsRef.current.winding = winding.sound;
         soundsRef.current.unwinding = unwinding.sound;
-
         audioReadyRef.current = true;
       } catch {
         audioReadyRef.current = false;
-        soundsRef.current.click = null;
         soundsRef.current.winding = null;
         soundsRef.current.unwinding = null;
       }
     })();
 
-    // Start animation on mount
-    resume();
+    // start clean
+    spin.setValue(0);
+    restSpinRef.current = 0;
+    setPower(0);
+    setModeNow("idle");
 
     return () => {
       cancelled = true;
-
-      isMountedRef.current = false;
-      isRunningRef.current = false;
 
       stopNative();
       spin.stopAnimation();
@@ -160,178 +195,575 @@ export default function Gears() {
       (async () => {
         try {
           audioReadyRef.current = false;
-
-          const { click, winding, unwinding } = soundsRef.current;
-          if (click) await click.unloadAsync();
+          const { winding, unwinding } = soundsRef.current;
           if (winding) await winding.unloadAsync();
           if (unwinding) await unwinding.unloadAsync();
         } catch {
           // ignore
         } finally {
-          soundsRef.current.click = null;
           soundsRef.current.winding = null;
           soundsRef.current.unwinding = null;
         }
       })();
     };
-  }, [resume, spin, stopNative]);
+  }, [setModeNow, spin, stopNative]);
 
-  // ---------------- RUNG 7: Gold driver + ergonomic placement ----------------
-  // Driver (Gold)
-  const DRIVER_W = 260;
-  const DRIVER_H = 260;
+  // ---- Live Power meter from spin value ----
+  useEffect(() => {
+    let raf = 0;
+    let last = -1;
 
-  // Bottom-left thumb-friendly zone (adjust later if needed)
-  const DRIVER_X = -15;
-  const DRIVER_Y = 190;
+    const id = spin.addListener(({ value }) => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
 
-  // Follower (Silver)
-  const FOLLOWER_W = 170;
-  const FOLLOWER_H = 170;
+        const turnsAway = Math.abs(value - restSpinRef.current);
+        const p = Math.min(9999, Math.round(turnsAway * 10)); // tenths of a turn
 
-  // Mesh tuned (starting point; tweak by eye later)
-  const FOLLOWER_X = 170;
-  const FOLLOWER_Y = 125;
-
-  // Ratio tuned for illusion (close to 260/170 ≈ 1.53)
-  const FOLLOWER_RATIO = 1.52;
-
-  const rotateDriver = useMemo(() => {
-    const outputRange =
-      direction === 1 ? ["0deg", "360deg"] : ["0deg", "-360deg"];
-
-    return spin.interpolate({
-      inputRange: [0, 1],
-      outputRange,
-      extrapolate: "extend",
+        if (p !== last) {
+          last = p;
+          setPower(p);
+        }
+      });
     });
-  }, [spin, direction]);
 
-  const rotateFollower = useMemo(() => {
-    const ratioSpin = Animated.multiply(spin, FOLLOWER_RATIO);
-    const outputRange =
-      direction === 1 ? ["0deg", "-360deg"] : ["0deg", "360deg"];
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      spin.removeListener(id);
+    };
+  }, [spin]);
 
-    return ratioSpin.interpolate({
-      inputRange: [0, 1],
-      outputRange,
-      extrapolate: "extend",
-    });
-  }, [spin, direction]);
+  // ---------------- Stage measurement ----------------
+  const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
 
-  const onToggleRun = useCallback(() => {
-    setIsRunning((prev) => {
-      const next = !prev;
+  // Center/bottom with slight left bias (right-handed use)
+  const DRIVER_LEFT_BIAS_PX = -40;
+  const DRIVER_BOTTOM_PAD_PX = 220;
 
-      // Discrete audio only (tap)
-      if (next) {
-        void safePlay("winding");
-        resume();
-      } else {
-        void safePlay("unwinding");
-        pause();
+  const driverCenterX = stageSize.w > 0 ? stageSize.w / 2 + DRIVER_LEFT_BIAS_PX : 0;
+  const driverCenterY = stageSize.h > 0 ? stageSize.h - DRIVER_BOTTOM_PAD_PX : 0;
+
+  // ---------------- Assets ----------------
+  const DRIVER_SOURCE = useMemo(
+    () => require("../../assets/gears/gear_gold_large.png"),
+    []
+  );
+
+  // Base (unique) assets
+  const BASE_ASSETS: GearAsset[] = useMemo(
+    () => [
+      { id: "silver_large", source: require("../../assets/gears/gear_silver_large.png"), tier: "large" },
+      { id: "silver_medium", source: require("../../assets/gears/gear_silver_medium.png"), tier: "medium" },
+
+      { id: "silver_small", source: require("../../assets/gears/gear_silver_small.png"), tier: "small" },
+      { id: "gunmetal_small", source: require("../../assets/gears/gear_gunmetal_small.png"), tier: "small" },
+      { id: "dark_small", source: require("../../assets/gears/gear_dark_small.png"), tier: "small" },
+      { id: "bright_small", source: require("../../assets/gears/gear_bright_small.png"), tier: "small" },
+    ],
+    []
+  );
+
+  const DRIVER_SIZE = 260;
+
+  // ---------------- Helpers ----------------
+  const randomIn = (min: number, max: number) => min + Math.random() * (max - min);
+  const deg2rad = (deg: number) => (deg * Math.PI) / 180;
+
+  const dist = (x1: number, y1: number, x2: number, y2: number) =>
+    Math.hypot(x1 - x2, y1 - y2);
+
+  const pickFollowerSize = (tier: GearAsset["tier"]) => {
+    if (tier === "large") return Math.round(randomIn(175, 205));
+    if (tier === "medium") return Math.round(randomIn(130, 160));
+    return Math.round(randomIn(90, 120)); // slightly smaller to pack more
+  };
+
+  // ---------------- Wind/unwind feel knobs ----------------
+  const WIND_SENSITIVITY = 1.0;
+
+  const UNWIND_MS_PER_TURN = 220;
+  const UNWIND_MIN_MS = 260;
+  const UNWIND_MAX_MS = 30000;
+
+  const clamp = (n: number, lo: number, hi: number) =>
+    Math.max(lo, Math.min(hi, n));
+
+  // ---------------- Responder (touch wrapper does NOT rotate) ----------------
+  const touchRef = useRef({
+    active: false,
+    moved: false,
+    longPressFired: false,
+    startPageX: 0,
+    startPageY: 0,
+    lastAngle: 0,
+
+    restSpin: 0,
+    startSpin: 0,
+    totalTurns: 0,
+
+    longPressTimer: null as ReturnType<typeof setTimeout> | null,
+  });
+
+  const MOVE_THRESHOLD = 18;
+  const LONG_PRESS_MS = 450;
+
+  const angleFromEvent = useCallback((evt: GestureResponderEvent) => {
+    const ne = evt.nativeEvent;
+    const x = ne.locationX ?? DRIVER_SIZE / 2;
+    const y = ne.locationY ?? DRIVER_SIZE / 2;
+    return Math.atan2(y - DRIVER_SIZE / 2, x - DRIVER_SIZE / 2);
+  }, []);
+
+  const normalizeDelta = (delta: number) => {
+    const PI2 = Math.PI * 2;
+    let d = delta % PI2;
+    if (d > Math.PI) d -= PI2;
+    if (d < -Math.PI) d += PI2;
+    return d;
+  };
+
+  const reverseNow = useCallback(() => {
+    if (modeRef.current === "dragging" || modeRef.current === "unwinding") return;
+    setDirection((prev) => (prev === 1 ? -1 : 1));
+  }, []);
+
+  const unwindToRest = useCallback(
+    (restValue: number) => {
+      stopNative();
+
+      spin.stopAnimation((current) => {
+        const from = Number.isFinite(current) ? current : restValue;
+        const turnsAway = Math.abs(from - restValue);
+
+        const duration = clamp(
+          turnsAway * UNWIND_MS_PER_TURN,
+          UNWIND_MIN_MS,
+          UNWIND_MAX_MS
+        );
+
+        const a = Animated.timing(spin, {
+          toValue: restValue,
+          duration,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        });
+
+        animRef.current = a;
+
+        a.start(({ finished }) => {
+          if (!finished) return;
+          setModeNow("idle");
+          void safeStop("unwinding");
+        });
+      });
+    },
+    [UNWIND_MAX_MS, UNWIND_MIN_MS, UNWIND_MS_PER_TURN, safeStop, setModeNow, spin, stopNative]
+  );
+
+  const onGoldGrant = useCallback(
+    (evt: GestureResponderEvent) => {
+      if (modeRef.current === "unwinding") return;
+
+      touchRef.current.active = true;
+      touchRef.current.moved = false;
+      touchRef.current.longPressFired = false;
+
+      touchRef.current.startPageX = evt.nativeEvent.pageX ?? 0;
+      touchRef.current.startPageY = evt.nativeEvent.pageY ?? 0;
+
+      const a0 = angleFromEvent(evt);
+      touchRef.current.lastAngle = a0;
+
+      spin.stopAnimation((v) => {
+        const s = Number.isFinite(v) ? v : 0;
+        touchRef.current.restSpin = s;
+        restSpinRef.current = s;
+        touchRef.current.startSpin = s;
+        touchRef.current.totalTurns = 0;
+      });
+
+      if (touchRef.current.longPressTimer) {
+        clearTimeout(touchRef.current.longPressTimer);
       }
 
-      return next;
-    });
-  }, [pause, resume, safePlay]);
+      touchRef.current.longPressTimer = setTimeout(() => {
+        if (!touchRef.current.active) return;
+        if (touchRef.current.moved) return;
+        touchRef.current.longPressFired = true;
+        reverseNow();
+      }, LONG_PRESS_MS);
+    },
+    [angleFromEvent, reverseNow, spin]
+  );
 
-  const onToggleDirection = useCallback(() => {
-    void safePlay("click");
-    setDirection((prev) => (prev === 1 ? -1 : 1));
-  }, [safePlay]);
+  const onGoldMove = useCallback(
+    (evt: GestureResponderEvent) => {
+      if (!touchRef.current.active) return;
+
+      const px = evt.nativeEvent.pageX ?? 0;
+      const py = evt.nativeEvent.pageY ?? 0;
+
+      const dx = px - touchRef.current.startPageX;
+      const dy = py - touchRef.current.startPageY;
+
+      if (!touchRef.current.moved) {
+        if (Math.abs(dx) + Math.abs(dy) < MOVE_THRESHOLD) return;
+
+        touchRef.current.moved = true;
+
+        if (touchRef.current.longPressTimer) {
+          clearTimeout(touchRef.current.longPressTimer);
+          touchRef.current.longPressTimer = null;
+        }
+
+        pause();
+        setModeNow("dragging");
+
+        void safeStop("unwinding");
+        void safeStartLoop("winding");
+
+        spin.stopAnimation((v) => {
+          touchRef.current.startSpin = Number.isFinite(v) ? v : 0;
+          touchRef.current.totalTurns = 0;
+        });
+
+        const a = angleFromEvent(evt);
+        touchRef.current.lastAngle = a;
+      }
+
+      if (touchRef.current.longPressFired) return;
+
+      const a = angleFromEvent(evt);
+
+      const dA = normalizeDelta(a - touchRef.current.lastAngle);
+      touchRef.current.lastAngle = a;
+
+      const dTurns = (dA / (Math.PI * 2)) * WIND_SENSITIVITY;
+      touchRef.current.totalTurns += dTurns;
+
+      const dirMul = direction === 1 ? 1 : -1;
+      spin.setValue(touchRef.current.startSpin + touchRef.current.totalTurns * dirMul);
+    },
+    [WIND_SENSITIVITY, angleFromEvent, direction, pause, safeStartLoop, safeStop, setModeNow, spin]
+  );
+
+  const onGoldRelease = useCallback(() => {
+    if (!touchRef.current.active) return;
+
+    touchRef.current.active = false;
+
+    if (touchRef.current.longPressTimer) {
+      clearTimeout(touchRef.current.longPressTimer);
+      touchRef.current.longPressTimer = null;
+    }
+
+    if (touchRef.current.longPressFired) {
+      setModeNow("idle");
+      return;
+    }
+
+    if (!touchRef.current.moved) return;
+
+    setModeNow("unwinding");
+
+    void safeStop("winding");
+    void safeStartLoop("unwinding");
+
+    unwindToRest(touchRef.current.restSpin);
+  }, [safeStartLoop, safeStop, setModeNow, unwindToRest]);
+
+  // ---------------- Random layout engine ----------------
+  const [placed, setPlaced] = useState<PlacedGear[]>([]);
+
+  const generateLayout = useCallback(
+    (w: number, h: number) => {
+      if (w <= 0 || h <= 0) return;
+
+      const driver: PlacedGear = {
+        id: "gold_driver",
+        source: DRIVER_SOURCE,
+        size: DRIVER_SIZE,
+        cx: driverCenterX,
+        cy: driverCenterY,
+        left: driverCenterX - DRIVER_SIZE / 2,
+        top: driverCenterY - DRIVER_SIZE / 2,
+        mult: 1,
+      };
+
+      const margin = 18;
+      const biteBase = 7;
+
+      const withinBounds = (cx: number, cy: number, r: number) =>
+        cx - r >= margin && cx + r <= w - margin && cy - r >= margin && cy + r <= h - margin;
+
+      const collides = (cx: number, cy: number, r: number, existing: PlacedGear[]) => {
+        for (const g of existing) {
+          const r2 = g.size / 2;
+          const d = dist(cx, cy, g.cx, g.cy);
+          if (d < r + r2 - 12) return true;
+        }
+        return false;
+      };
+
+      // Stronger upward bias to fill the top
+      const pickAngleDeg = () => {
+        const roll = Math.random();
+        if (roll < 0.78) return randomIn(-175, 35);   // mostly upper
+        if (roll < 0.95) return randomIn(35, 165);    // sides
+        return randomIn(165, 330);                    // rare lower
+      };
+
+      // === follower pool: repeat small gears ===
+      const SMALL_DUPES = 2;          // each small gear appears twice
+      const EXTRA_RANDOM_SMALL = 2;   // plus a couple more smalls
+
+      const large = BASE_ASSETS.filter((a) => a.tier === "large");
+      const medium = BASE_ASSETS.filter((a) => a.tier === "medium");
+      const smalls = BASE_ASSETS.filter((a) => a.tier === "small");
+
+      const followerPool: GearAsset[] = [];
+
+      // keep one large + one medium as anchors
+      if (large[0]) followerPool.push({ ...large[0] });
+      if (medium[0]) followerPool.push({ ...medium[0] });
+
+      // repeat smalls
+      for (const s of smalls) {
+        for (let i = 0; i < SMALL_DUPES; i++) {
+          followerPool.push({ ...s, id: `${s.id}_dup${i + 1}` });
+        }
+      }
+
+      // sprinkle extras (random smalls)
+      for (let i = 0; i < EXTRA_RANDOM_SMALL; i++) {
+        const pick = smalls[Math.floor(randomIn(0, smalls.length))];
+        followerPool.push({ ...pick, id: `${pick.id}_extra${i + 1}` });
+      }
+
+      const placedGears: PlacedGear[] = [driver];
+      const followers = [...followerPool].sort(() => Math.random() - 0.5);
+
+      for (const asset of followers) {
+        const size = pickFollowerSize(asset.tier);
+        const rNew = size / 2;
+
+        let best: PlacedGear | null = null;
+
+        for (let t = 0; t < 140; t++) {
+          // bias parent selection away from always using driver
+          const parent =
+            Math.random() < 0.50
+              ? placedGears[0]
+              : placedGears[Math.floor(randomIn(0, placedGears.length))];
+
+          const rP = parent.size / 2;
+          const bite = biteBase + (asset.tier === "large" ? 2 : 0);
+          const centerDist = rP + rNew - bite;
+
+          const th = deg2rad(pickAngleDeg());
+          const cx = parent.cx + Math.cos(th) * centerDist;
+          const cy = parent.cy + Math.sin(th) * centerDist;
+
+          if (!withinBounds(cx, cy, rNew)) continue;
+          if (collides(cx, cy, rNew, placedGears)) continue;
+
+          const ratio = parent.size / size;
+          const mult = parent.mult * (-ratio);
+
+          best = {
+            id: asset.id,
+            source: asset.source,
+            size,
+            cx,
+            cy,
+            left: cx - rNew,
+            top: cy - rNew,
+            mult,
+          };
+          break;
+        }
+
+        if (best) placedGears.push(best);
+      }
+
+      setPlaced(placedGears.filter((g) => g.id !== "gold_driver"));
+    },
+    [BASE_ASSETS, DRIVER_SOURCE, driverCenterX, driverCenterY]
+  );
+
+  useEffect(() => {
+    if (stageSize.w <= 0 || stageSize.h <= 0) return;
+    generateLayout(stageSize.w, stageSize.h);
+  }, [generateLayout, stageSize.h, stageSize.w]);
+
+  const reset = useCallback(() => {
+    void safeStop("winding");
+    void safeStop("unwinding");
+    stopNative();
+    spin.stopAnimation();
+    spin.setValue(0);
+    restSpinRef.current = 0;
+    setDirection(1);
+    setModeNow("idle");
+    setPower(0);
+
+    if (stageSize.w > 0 && stageSize.h > 0) {
+      generateLayout(stageSize.w, stageSize.h);
+    }
+  }, [generateLayout, safeStop, setModeNow, spin, stageSize.h, stageSize.w, stopNative]);
+
+  const uiDir = direction === 1 ? "CW" : "CCW";
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Gears</Text>
+    <FullscreenWrapper>
+      <View style={[styles.root, { backgroundColor: "#0B0B0F" }]}>
+        <SafeAreaView style={{ flex: 1 }}>
+          {/* HEADER */}
+          <View style={styles.topBar}>
+            <BackButton />
+            <View style={styles.counterPill}>
+              <Text style={styles.counterLabel}>Power:</Text>
+              <Text style={styles.counterTxt}>{(power / 10).toFixed(1)}</Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setSettingsOpen(true)}
+              style={styles.settingsBtn}
+            >
+              <Ionicons name="settings-sharp" size={26} color="#C0C0C0" />
+            </TouchableOpacity>
+          </View>
 
-      <Pressable
-        style={styles.stage}
-        onPress={onToggleRun}
-        onLongPress={onToggleDirection}
-      >
-        {/* Gold driver gear */}
-        <Animated.Image
-          source={require("../../assets/gears/gear_gold_large.png")}
-          resizeMode="contain"
-          style={[
-            styles.img,
-            {
-              width: DRIVER_W,
-              height: DRIVER_H,
-              transform: [
-                { translateX: DRIVER_X },
-                { translateY: DRIVER_Y },
-                { rotate: rotateDriver },
-              ],
-            },
-          ]}
-        />
+          {/* STAGE */}
+          <View
+            style={styles.stage}
+            onLayout={(e) => {
+              const { width, height } = e.nativeEvent.layout;
+              setStageSize({ w: width, h: height });
+            }}
+          >
+            {/* Followers (network) */}
+            {placed.map((g) => {
+              const rotate = rotateForMultiplier(g.mult);
+              return (
+                <Animated.Image
+                  key={g.id}
+                  source={g.source}
+                  resizeMode="contain"
+                  style={[
+                    styles.img,
+                    {
+                      width: g.size,
+                      height: g.size,
+                      left: g.left,
+                      top: g.top,
+                      transform: [{ rotate }],
+                    },
+                  ]}
+                />
+              );
+            })}
 
-        {/* Silver follower gear (opposite direction, ratio) */}
-        <Animated.Image
-          source={require("../../assets/gears/gear_silver_small.png")}
-          resizeMode="contain"
-          style={[
-            styles.img,
-            {
-              width: FOLLOWER_W,
-              height: FOLLOWER_H,
-              transform: [
-                { translateX: FOLLOWER_X },
-                { translateY: FOLLOWER_Y },
-                { rotate: rotateFollower },
-              ],
-            },
-          ]}
-        />
+            {/* DRIVER (touch wrapper does NOT rotate) */}
+            <View
+              style={[
+                styles.img,
+                {
+                  width: DRIVER_SIZE,
+                  height: DRIVER_SIZE,
+                  left: driverCenterX - DRIVER_SIZE / 2,
+                  top: driverCenterY - DRIVER_SIZE / 2,
+                },
+              ]}
+              onStartShouldSetResponder={() => true}
+              onMoveShouldSetResponder={() => true}
+              onResponderGrant={onGoldGrant}
+              onResponderMove={onGoldMove}
+              onResponderRelease={onGoldRelease}
+              onResponderTerminate={onGoldRelease}
+            >
+              <Animated.View
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  transform: [{ rotate: rotateDriver }],
+                }}
+              >
+                <Animated.Image
+                  source={DRIVER_SOURCE}
+                  resizeMode="contain"
+                  style={{ width: "100%", height: "100%" }}
+                />
+              </Animated.View>
+            </View>
 
-        <View style={styles.overlay}>
-          <Text style={styles.overlayText}>
-            Tap: {isRunning ? "Pause" : "Resume"} • Long-press: Reverse
-          </Text>
-          <Text style={styles.overlayTextSmall}>
-            Status: {isRunning ? "Running" : "Paused"} • Direction:{" "}
-            {direction === 1 ? "CW" : "CCW"}
-          </Text>
-          <Text style={styles.overlayTextSmall}>
-            Follower ratio: {FOLLOWER_RATIO.toFixed(2)} • Follower XY:{" "}
-            {FOLLOWER_X},{FOLLOWER_Y}
-          </Text>
-        </View>
-      </Pressable>
+            {/* Overlay */}
+            <View style={styles.overlay} pointerEvents="none">
+              <Text style={styles.overlayText}>
+                Drag: Wind • Release: Unwind • Long press: Reverse
+              </Text>
+              <Text style={styles.overlayTextSmall}>
+                Status: {mode.toUpperCase()} • Dir: {uiDir}
+              </Text>
+            </View>
+          </View>
 
-      <Text style={styles.hint}>
-        Rung 7: gold driver promoted + thumb-friendly placement
-      </Text>
-    </View>
+          {/* Settings modal */}
+          <SettingsModal
+            visible={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            onReset={reset}
+            soundOn={soundOn}
+            setSoundOn={setSoundOn}
+          />
+        </SafeAreaView>
+      </View>
+    </FullscreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#0B0B0F",
-    paddingTop: 40,
-    paddingHorizontal: 16,
+  root: { flex: 1 },
+
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingTop: 4,
   },
-  title: {
-    fontSize: 28,
+  settingsBtn: { paddingHorizontal: 10, paddingVertical: 6 },
+
+  counterPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    minWidth: 84,
+    paddingHorizontal: 14,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.25)",
+  },
+  counterLabel: {
+    color: "#fff",
     fontWeight: "700",
-    color: "white",
-    marginBottom: 12,
+    fontSize: 14,
+    marginRight: 6,
   },
+  counterTxt: { color: "#fff", fontWeight: "800", fontSize: 16 },
+
   stage: {
     flex: 1,
     borderRadius: 16,
     backgroundColor: "#12121A",
-    alignItems: "center",
-    justifyContent: "center",
     overflow: "hidden",
+    marginHorizontal: 12,
+    marginTop: 10,
+    marginBottom: 12,
   },
-  img: {
-    position: "absolute",
-  },
+
+  img: { position: "absolute" },
+
   overlay: {
     position: "absolute",
     left: 12,
@@ -342,18 +774,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: "rgba(0,0,0,0.45)",
   },
-  overlayText: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  overlayTextSmall: {
-    color: "#D5D5E2",
-    fontSize: 12,
-    marginTop: 4,
-  },
-  hint: {
-    color: "#C9C9D6",
-    marginTop: 12,
-  },
+  overlayText: { color: "white", fontSize: 14, fontWeight: "600" },
+  overlayTextSmall: { color: "#D5D5E2", fontSize: 12, marginTop: 4 },
 });
