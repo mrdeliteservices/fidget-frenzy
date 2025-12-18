@@ -509,14 +509,14 @@ export default function Gears() {
       // Stronger upward bias to fill the top
       const pickAngleDeg = () => {
         const roll = Math.random();
-        if (roll < 0.78) return randomIn(-175, 35);   // mostly upper
-        if (roll < 0.95) return randomIn(35, 165);    // sides
-        return randomIn(165, 330);                    // rare lower
+        if (roll < 0.78) return randomIn(-175, 35); // mostly upper
+        if (roll < 0.95) return randomIn(35, 165); // sides
+        return randomIn(165, 330); // rare lower
       };
 
       // === follower pool: repeat small gears ===
-      const SMALL_DUPES = 2;          // each small gear appears twice
-      const EXTRA_RANDOM_SMALL = 2;   // plus a couple more smalls
+      const SMALL_DUPES = 2; // each small gear appears twice
+      const EXTRA_RANDOM_SMALL = 2; // plus a couple more smalls
 
       const large = BASE_ASSETS.filter((a) => a.tier === "large");
       const medium = BASE_ASSETS.filter((a) => a.tier === "medium");
@@ -561,7 +561,7 @@ export default function Gears() {
           const bite = biteBase + (asset.tier === "large" ? 2 : 0);
           const centerDist = rP + rNew - bite;
 
-          const th = deg2rad(pickAngleDeg());
+          const th = (pickAngleDeg() * Math.PI) / 180;
           const cx = parent.cx + Math.cos(th) * centerDist;
           const cy = parent.cy + Math.sin(th) * centerDist;
 
@@ -613,8 +613,6 @@ export default function Gears() {
     }
   }, [generateLayout, safeStop, setModeNow, spin, stageSize.h, stageSize.w, stopNative]);
 
-  const uiDir = direction === 1 ? "CW" : "CCW";
-
   return (
     <FullscreenWrapper>
       <View style={[styles.root, { backgroundColor: "#0B0B0F" }]}>
@@ -626,10 +624,7 @@ export default function Gears() {
               <Text style={styles.counterLabel}>Power:</Text>
               <Text style={styles.counterTxt}>{(power / 10).toFixed(1)}</Text>
             </View>
-            <TouchableOpacity
-              onPress={() => setSettingsOpen(true)}
-              style={styles.settingsBtn}
-            >
+            <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.settingsBtn}>
               <Ionicons name="settings-sharp" size={26} color="#C0C0C0" />
             </TouchableOpacity>
           </View>
@@ -696,16 +691,6 @@ export default function Gears() {
                 />
               </Animated.View>
             </View>
-
-            {/* Overlay */}
-            <View style={styles.overlay} pointerEvents="none">
-              <Text style={styles.overlayText}>
-                Drag: Wind • Release: Unwind • Long press: Reverse
-              </Text>
-              <Text style={styles.overlayTextSmall}>
-                Status: {mode.toUpperCase()} • Dir: {uiDir}
-              </Text>
-            </View>
           </View>
 
           {/* Settings modal */}
@@ -763,17 +748,4 @@ const styles = StyleSheet.create({
   },
 
   img: { position: "absolute" },
-
-  overlay: {
-    position: "absolute",
-    left: 12,
-    right: 12,
-    bottom: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 12,
-    backgroundColor: "rgba(0,0,0,0.45)",
-  },
-  overlayText: { color: "white", fontSize: 14, fontWeight: "600" },
-  overlayTextSmall: { color: "#D5D5E2", fontSize: 12, marginTop: 4 },
 });
