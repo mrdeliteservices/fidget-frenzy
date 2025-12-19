@@ -5,6 +5,7 @@
 // ✅ Only winding/unwinding audio (no click)
 // ✅ Random gear network each mount + reset (safe layout, meshes correctly)
 // ✅ More top density: repeat small gears + stronger upward placement bias
+// ✅ Phase 2: Prevent multi-contact (single authority parent per follower)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -494,14 +495,29 @@ export default function Gears() {
       const margin = 18;
       const biteBase = 7;
 
+      // Phase 2: Reject any follower placement that would become tangent/near-tangent
+      // to ANY gear other than its chosen parent (prevents constraint loops).
+      const MULTI_CONTACT_TOLERANCE_PX = 6; // small gap required vs non-parent gears
+
       const withinBounds = (cx: number, cy: number, r: number) =>
         cx - r >= margin && cx + r <= w - margin && cy - r >= margin && cy + r <= h - margin;
 
-      const collides = (cx: number, cy: number, r: number, existing: PlacedGear[]) => {
+      // Phase 2: single-authority validation
+      const violatesSingleContact = (
+        cx: number,
+        cy: number,
+        rNew: number,
+        parentId: string,
+        existing: PlacedGear[]
+      ) => {
         for (const g of existing) {
+          if (g.id === parentId) continue; // parent contact is allowed (meshing via bite)
           const r2 = g.size / 2;
           const d = dist(cx, cy, g.cx, g.cy);
-          if (d < r + r2 - 12) return true;
+
+          // Disallow tangent/near-tangent/overlap with any non-parent gear.
+          // If d <= rNew + r2 => tangent or overlap. Add tolerance to avoid "almost tangent" jitter contacts.
+          if (d <= rNew + r2 + MULTI_CONTACT_TOLERANCE_PX) return true;
         }
         return false;
       };
@@ -550,7 +566,8 @@ export default function Gears() {
 
         let best: PlacedGear | null = null;
 
-        for (let t = 0; t < 140; t++) {
+        // Increased attempts because Phase 2 rejection is stricter (keeps density without cheating)
+        for (let t = 0; t < 220; t++) {
           // bias parent selection away from always using driver
           const parent =
             Math.random() < 0.50
@@ -566,7 +583,9 @@ export default function Gears() {
           const cy = parent.cy + Math.sin(th) * centerDist;
 
           if (!withinBounds(cx, cy, rNew)) continue;
-          if (collides(cx, cy, rNew, placedGears)) continue;
+
+          // Phase 2: reject if this follower would touch ANY other gear besides its chosen parent
+          if (violatesSingleContact(cx, cy, rNew, parent.id, placedGears)) continue;
 
           const ratio = parent.size / size;
           const mult = parent.mult * (-ratio);
