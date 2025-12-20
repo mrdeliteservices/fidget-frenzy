@@ -23,7 +23,6 @@ import {
 } from "react-native";
 import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
-import { Ionicons } from "@expo/vector-icons";
 import Svg, {
   Path,
   Rect,
@@ -40,6 +39,7 @@ import Svg, {
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import GameHeader from "../../components/GameHeader";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -260,20 +260,13 @@ export default function SliderSwitch() {
     <FullscreenWrapper>
       <View style={[styles.root, { backgroundColor: COLOR.bg }]}>
         <SafeAreaView style={{ flex: 1 }}>
-          {/* HEADER */}
-          <View style={styles.topBar}>
-            <BackButton />
-            <View style={styles.counterPill}>
-              <Text style={styles.counterLabel}>Clicks:</Text>
-              <Text style={styles.counterTxt}>{count}</Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => setSettingsOpen(true)}
-              style={styles.settingsBtn}
-            >
-              <Ionicons name="settings-sharp" size={26} color="#C0C0C0" />
-            </TouchableOpacity>
-          </View>
+          {/* HEADER (canonical GameHeader) */}
+          <GameHeader
+            left={<BackButton />}
+            centerLabel="Clicks:"
+            centerValue={count}
+            onPressSettings={() => setSettingsOpen(true)}
+          />
 
           {/* Ceiling line */}
           <View style={styles.ceilingLine} />
@@ -290,12 +283,7 @@ export default function SliderSwitch() {
           </View>
 
           {/* Cord */}
-          <View
-            style={[
-              styles.cord,
-              { height: L.cordHeight, marginBottom: -1 },
-            ]}
-          />
+          <View style={[styles.cord, { height: L.cordHeight, marginBottom: -1 }]} />
 
           {/* ===================== LAMP GROUP ===================== */}
           <View style={[styles.lampGroup, { top: L.LAMP_GROUP_TOP }]}>
@@ -338,28 +326,10 @@ export default function SliderSwitch() {
             >
               <Svg width={L.bottomW} height={L.coneH}>
                 <Defs>
-                  <SvgLinearGradient
-                    id="beamFadeY"
-                    x1="0"
-                    y1="0"
-                    x2="0"
-                    y2="1"
-                  >
-                    <Stop
-                      offset="0%"
-                      stopColor={COLOR.warmGlow}
-                      stopOpacity="0.78"
-                    />
-                    <Stop
-                      offset="42%"
-                      stopColor={COLOR.warmGlow}
-                      stopOpacity="0.3"
-                    />
-                    <Stop
-                      offset="100%"
-                      stopColor={COLOR.warmGlow}
-                      stopOpacity="0.06"
-                    />
+                  <SvgLinearGradient id="beamFadeY" x1="0" y1="0" x2="0" y2="1">
+                    <Stop offset="0%" stopColor={COLOR.warmGlow} stopOpacity="0.78" />
+                    <Stop offset="42%" stopColor={COLOR.warmGlow} stopOpacity="0.3" />
+                    <Stop offset="100%" stopColor={COLOR.warmGlow} stopOpacity="0.06" />
                   </SvgLinearGradient>
                 </Defs>
                 <Path d={conePath} fill="url(#beamFadeY)" />
@@ -410,18 +380,10 @@ export default function SliderSwitch() {
                   <Path
                     d={`
                       M ${L.domeW / 2 - L.bulbHalfW} ${rimY - 10}
-                      Q ${L.domeW / 2 - (L.bulbHalfW - 6)} ${rimY - 26} ${
-                      L.domeW / 2
-                    } ${rimY - 40}
-                      Q ${L.domeW / 2 + (L.bulbHalfW - 6)} ${rimY - 26} ${
-                      L.domeW / 2 + L.bulbHalfW
-                    } ${rimY - 10}
-                      Q ${L.domeW / 2 + L.bulbHalfW} ${rimY - 2} ${
-                      L.domeW / 2
-                    } ${rimY + 34}
-                      Q ${L.domeW / 2 - L.bulbHalfW} ${rimY - 2} ${
-                      L.domeW / 2 - L.bulbHalfW
-                    } ${rimY - 10} Z
+                      Q ${L.domeW / 2 - (L.bulbHalfW - 6)} ${rimY - 26} ${L.domeW / 2} ${rimY - 40}
+                      Q ${L.domeW / 2 + (L.bulbHalfW - 6)} ${rimY - 26} ${L.domeW / 2 + L.bulbHalfW} ${rimY - 10}
+                      Q ${L.domeW / 2 + L.bulbHalfW} ${rimY - 2} ${L.domeW / 2} ${rimY + 34}
+                      Q ${L.domeW / 2 - L.bulbHalfW} ${rimY - 2} ${L.domeW / 2 - L.bulbHalfW} ${rimY - 10} Z
                     `}
                     fill={COLOR.glassFill}
                     stroke={COLOR.glassStroke}
@@ -430,12 +392,8 @@ export default function SliderSwitch() {
                   <AnimatedPath
                     d={`
                       M ${L.domeW / 2 - 9} ${rimY - 22}
-                      Q ${L.domeW / 2 - 4} ${rimY - 14} ${
-                      L.domeW / 2
-                    } ${rimY - 10}
-                      Q ${L.domeW / 2 + 4} ${rimY - 14} ${
-                      L.domeW / 2 + 9
-                    } ${rimY - 22}
+                      Q ${L.domeW / 2 - 4} ${rimY - 14} ${L.domeW / 2} ${rimY - 10}
+                      Q ${L.domeW / 2 + 4} ${rimY - 14} ${L.domeW / 2 + 9} ${rimY - 22}
                     `}
                     stroke={COLOR.filament}
                     strokeWidth={2.8}
@@ -456,9 +414,7 @@ export default function SliderSwitch() {
                 <Path
                   d={`
                     M ${L.domeW * rimLeftPct} ${rimY}
-                    Q ${L.domeW / 2} ${domeTopY} ${
-                    L.domeW * rimRightPct
-                  } ${rimY} Z
+                    Q ${L.domeW / 2} ${domeTopY} ${L.domeW * rimRightPct} ${rimY} Z
                   `}
                   fill={COLOR.dome}
                 />
@@ -481,26 +437,15 @@ export default function SliderSwitch() {
                 L.coneH +
                 L.POOL_RAISE,
               left: "50%",
-              transform: [
-                { translateX: -(W * L.POOL_WIDTH_FACTOR) / 2 },
-              ],
+              transform: [{ translateX: -(W * L.POOL_WIDTH_FACTOR) / 2 }],
               opacity: coneOpacity,
             }}
           >
-            <Svg
-              width={W * L.POOL_WIDTH_FACTOR}
-              height={L.POOL_RY * 3.4}
-            >
+            <Svg width={W * L.POOL_WIDTH_FACTOR} height={L.POOL_RY * 3.4}>
               <Defs>
                 <RadialGradient id="floorGlow" cx="50%" cy="50%" r="72%">
-                  <Stop
-                    offset="0%"
-                    stopColor="rgba(255,201,60,0.22)"
-                  />
-                  <Stop
-                    offset="100%"
-                    stopColor="rgba(255,201,60,0.02)"
-                  />
+                  <Stop offset="0%" stopColor="rgba(255,201,60,0.22)" />
+                  <Stop offset="100%" stopColor="rgba(255,201,60,0.02)" />
                 </RadialGradient>
               </Defs>
               <Ellipse
@@ -559,10 +504,7 @@ export default function SliderSwitch() {
         {/* ===== Dev FAB / Dev Menu (only when DEBUG) ===== */}
         {DEBUG && (
           <>
-            <TouchableOpacity
-              onPress={() => setDebugOpen(true)}
-              style={styles.devFab}
-            >
+            <TouchableOpacity onPress={() => setDebugOpen(true)} style={styles.devFab}>
               <Text style={{ color: "#111", fontWeight: "700" }}>⚙️</Text>
             </TouchableOpacity>
 
@@ -576,146 +518,85 @@ export default function SliderSwitch() {
                 <View style={styles.devModal}>
                   <View style={styles.devHeader}>
                     <Text style={styles.devTitle}>Developer Tuning</Text>
-                    <TouchableOpacity
-                      onPress={() =>
-                        setDebugOverlay((v) => !v)
-                      }
-                    >
+                    <TouchableOpacity onPress={() => setDebugOverlay((v) => !v)}>
                       <Text style={styles.devToggle}>
-                        {debugOverlay
-                          ? "Overlay: ON"
-                          : "Overlay: OFF"}
+                        {debugOverlay ? "Overlay: ON" : "Overlay: OFF"}
                       </Text>
                     </TouchableOpacity>
                   </View>
 
-                  {row(
-                    "Dome Top Y",
-                    domeTopY,
-                    () => setDomeTopY((v) => v - 2),
-                    () => setDomeTopY((v) => v + 2)
+                  {row("Dome Top Y", domeTopY, () => setDomeTopY((v) => v - 2), () =>
+                    setDomeTopY((v) => v + 2)
                   )}
-                  {row(
-                    "Rim Y",
-                    rimY,
-                    () => setRimY((v) => v - 2),
-                    () => setRimY((v) => v + 2)
+                  {row("Rim Y", rimY, () => setRimY((v) => v - 2), () =>
+                    setRimY((v) => v + 2)
                   )}
                   {row(
                     "Rim Left %",
                     rimLeftPct,
-                    () =>
-                      setRimLeftPct((v) =>
-                        Math.max(0.05, +(v - 0.02).toFixed(2))
-                      ),
-                    () =>
-                      setRimLeftPct((v) =>
-                        Math.min(0.45, +(v + 0.02).toFixed(2))
-                      )
+                    () => setRimLeftPct((v) => Math.max(0.05, +(v - 0.02).toFixed(2))),
+                    () => setRimLeftPct((v) => Math.min(0.45, +(v + 0.02).toFixed(2)))
                   )}
                   {row(
                     "Rim Right %",
                     rimRightPct,
-                    () =>
-                      setRimRightPct((v) =>
-                        Math.max(0.55, +(v - 0.02).toFixed(2))
-                      ),
-                    () =>
-                      setRimRightPct((v) =>
-                        Math.min(0.95, +(v + 0.02).toFixed(2))
-                      )
+                    () => setRimRightPct((v) => Math.max(0.55, +(v - 0.02).toFixed(2))),
+                    () => setRimRightPct((v) => Math.min(0.95, +(v + 0.02).toFixed(2)))
                   )}
                   {row(
                     "Rim Inset",
                     rimInnerInset,
-                    () =>
-                      setRimInnerInset((v) =>
-                        Math.max(0, v - 1)
-                      ),
+                    () => setRimInnerInset((v) => Math.max(0, v - 1)),
                     () => setRimInnerInset((v) => v + 1)
                   )}
                   {row(
                     "Beam Offset",
                     beamOffset,
-                    () =>
-                      setBeamOffset((v) =>
-                        Math.max(0, v - 4)
-                      ),
+                    () => setBeamOffset((v) => Math.max(0, v - 4)),
                     () => setBeamOffset((v) => v + 4)
                   )}
 
                   {row(
                     "Cap Drop",
                     capDrop,
-                    () =>
-                      setCapDrop((v) =>
-                        Math.max(0, v - 2)
-                      ),
+                    () => setCapDrop((v) => Math.max(0, v - 2)),
                     () => setCapDrop((v) => v + 2)
                   )}
                   {row(
                     "Cord Extra",
                     cordExtra,
-                    () =>
-                      setCordExtra((v) =>
-                        Math.max(0, v - 2)
-                      ),
+                    () => setCordExtra((v) => Math.max(0, v - 2)),
                     () => setCordExtra((v) => v + 2)
                   )}
 
                   {row(
                     "Pool Width",
                     POOL_WIDTH_FACTOR,
-                    () =>
-                      setPOOL_WIDTH_FACTOR((v) =>
-                        +(Math.max(0.6, v - 0.02)).toFixed(2)
-                      ),
-                    () =>
-                      setPOOL_WIDTH_FACTOR((v) =>
-                        +(Math.min(1.0, v + 0.02)).toFixed(2))
+                    () => setPOOL_WIDTH_FACTOR((v) => +(Math.max(0.6, v - 0.02)).toFixed(2)),
+                    () => setPOOL_WIDTH_FACTOR((v) => +(Math.min(1.0, v + 0.02)).toFixed(2))
                   )}
                   {row(
                     "Pool RX",
                     POOL_RX_FACTOR,
-                    () =>
-                      setPOOL_RX_FACTOR((v) =>
-                        +(Math.max(0.2, v - 0.02)).toFixed(2))
-                    ,
-                    () =>
-                      setPOOL_RX_FACTOR((v) =>
-                        +(Math.min(0.6, v + 0.02)).toFixed(2))
+                    () => setPOOL_RX_FACTOR((v) => +(Math.max(0.2, v - 0.02)).toFixed(2)),
+                    () => setPOOL_RX_FACTOR((v) => +(Math.min(0.6, v + 0.02)).toFixed(2))
                   )}
                   {row(
                     "Pool RY",
                     POOL_RY,
-                    () =>
-                      setPOOL_RY((v) =>
-                        Math.max(16, v - 2)
-                      ),
-                    () =>
-                      setPOOL_RY((v) =>
-                        Math.min(64, v + 2)
-                      )
+                    () => setPOOL_RY((v) => Math.max(16, v - 2)),
+                    () => setPOOL_RY((v) => Math.min(64, v + 2))
                   )}
-                  {row(
-                    "Pool Raise",
-                    POOL_RAISE,
-                    () => setPOOL_RAISE((v) => v - 4),
-                    () => setPOOL_RAISE((v) => v + 4)
+                  {row("Pool Raise", POOL_RAISE, () => setPOOL_RAISE((v) => v - 4), () =>
+                    setPOOL_RAISE((v) => v + 4)
                   )}
 
                   <View style={styles.devFooter}>
-                    <TouchableOpacity
-                      style={styles.devBtn}
-                      onPress={() => setDebugOpen(false)}
-                    >
+                    <TouchableOpacity style={styles.devBtn} onPress={() => setDebugOpen(false)}>
                       <Text style={styles.devBtnTxt}>Close</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[
-                        styles.devBtn,
-                        { backgroundColor: "#FFD458" },
-                      ]}
+                      style={[styles.devBtn, { backgroundColor: "#FFD458" }]}
                       onPress={() => {
                         setDomeTopY(8);
                         setRimY(80);
@@ -731,12 +612,7 @@ export default function SliderSwitch() {
                         setPOOL_RAISE(-276);
                       }}
                     >
-                      <Text
-                        style={[
-                          styles.devBtnTxt,
-                          { color: "#141414" },
-                        ]}
-                      >
+                      <Text style={[styles.devBtnTxt, { color: "#141414" }]}>
                         Reset to Preset
                       </Text>
                     </TouchableOpacity>
@@ -752,12 +628,7 @@ export default function SliderSwitch() {
 }
 
 /* ---------- Dev Menu row helper ---------- */
-function row(
-  label: string,
-  value: number,
-  dec: () => void,
-  inc: () => void
-) {
+function row(label: string, value: number, dec: () => void, inc: () => void) {
   return (
     <View style={devStyles.row} key={label}>
       <Text style={devStyles.rowLabel}>{label}</Text>
@@ -775,33 +646,6 @@ function row(
 /* ---------------- styles ---------------- */
 const styles = StyleSheet.create({
   root: { flex: 1 },
-
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 12,
-    paddingTop: 4,
-  },
-  settingsBtn: { paddingHorizontal: 10, paddingVertical: 6 },
-
-  counterPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 64,
-    paddingHorizontal: 14,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.25)",
-  },
-  counterLabel: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-    marginRight: 4,
-  },
-  counterTxt: { color: "#fff", fontWeight: "800", fontSize: 16 },
 
   ceilingLine: {
     width: "100%",

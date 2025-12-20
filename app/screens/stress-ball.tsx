@@ -1,15 +1,11 @@
 // Fidget Frenzy – Stress Ball v0.9-dev unified
 // Expo SDK 54 / RN 0.81
 // Interactive squish orb with shared SettingsModal + soundManager
+// ✅ Header standardized via GameHeader (Back + "Squeezes:" + Settings)
+// ✅ Header pinned w/ tunable top offset (Spinner-sage Phase 2 fix)
 
 import React, { useState, useEffect } from "react";
-import {
-  View,
-  StyleSheet,
-  Dimensions,
-  Pressable,
-  Text,
-} from "react-native";
+import { View, StyleSheet, Dimensions, Pressable, SafeAreaView } from "react-native";
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -19,14 +15,18 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import GameHeader from "../../components/GameHeader";
 import { playSound, preloadSounds } from "../../lib/soundManager";
 
-const { width: W, height: H } = Dimensions.get("window");
+const { width: W } = Dimensions.get("window");
+const BALL_SIZE = W * 0.4;
+
+// 🔧 TUNING: match Spinner Phase 2 behavior
+const HEADER_TOP = 65;
 
 export default function StressBallScreen() {
   const [soundOn, setSoundOn] = useState(true);
@@ -36,7 +36,6 @@ export default function StressBallScreen() {
   const scale = useSharedValue(1);
   const pulse = useSharedValue(1);
 
-  // preload all stress-ball sounds
   useEffect(() => {
     preloadSounds({
       squish: require("../../assets/sounds/squish.mp3"),
@@ -53,16 +52,18 @@ export default function StressBallScreen() {
       -1,
       true
     );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // animated squish
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value * pulse.value }],
   }));
 
   const handlePressIn = async () => {
     scale.value = withSpring(0.8, { stiffness: 150, damping: 12 });
-    if (soundOn) await playSound("squish", require("../../assets/sounds/squish.mp3"));
+    if (soundOn) {
+      await playSound("squish", require("../../assets/sounds/squish.mp3"));
+    }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
   };
 
@@ -71,77 +72,83 @@ export default function StressBallScreen() {
     scale.value = withSpring(1.1, { stiffness: 150, damping: 10 }, () => {
       scale.value = withSpring(1);
     });
-    if (soundOn) await playSound("pop", require("../../assets/sounds/pop.mp3"));
+    if (soundOn) {
+      await playSound("pop", require("../../assets/sounds/pop.mp3"));
+    }
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const reset = () => {
-    setPressCount(0);
-  };
+  const reset = () => setPressCount(0);
 
   return (
     <FullscreenWrapper>
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
-          <BackButton />
-          <Ionicons
-            name="settings-sharp"
-            size={28}
-            color="#FDD017"
-            onPress={() => setSettingsVisible(true)}
-          />
-        </View>
-
-        {/* Counter */}
-        <Text style={styles.counter}>Squeezes: {pressCount}</Text>
-
-        {/* Stress Ball */}
-        <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut}>
-          <Animated.View style={[styles.ball, animatedStyle]}>
-            <LinearGradient
-              colors={["#16a34a", "#22c55e", "#166534"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={styles.gradient}
+      <View style={styles.root}>
+        <SafeAreaView style={styles.safe}>
+          {/* HEADER (pinned, Spinner-sage offset) */}
+          <View style={styles.headerWrap}>
+            <GameHeader
+              left={<BackButton />}
+              centerLabel="Squeezes:"
+              centerValue={pressCount}
+              onPressSettings={() => setSettingsVisible(true)}
             />
-          </Animated.View>
-        </Pressable>
+          </View>
 
-        {/* Settings Modal */}
-        <SettingsModal
-          visible={settingsVisible}
-          onClose={() => setSettingsVisible(false)}
-          onReset={reset}
-          soundOn={soundOn}
-          setSoundOn={setSoundOn}
-        />
+          {/* CONTENT (centered independently) */}
+          <View style={styles.content}>
+            <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut}>
+              <Animated.View style={[styles.ball, animatedStyle]}>
+                <LinearGradient
+                  colors={["#16a34a", "#22c55e", "#166534"]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={styles.gradient}
+                />
+              </Animated.View>
+            </Pressable>
+          </View>
+
+          <SettingsModal
+            visible={settingsVisible}
+            onClose={() => setSettingsVisible(false)}
+            onReset={reset}
+            soundOn={soundOn}
+            setSoundOn={setSoundOn}
+          />
+        </SafeAreaView>
       </View>
     </FullscreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
     flex: 1,
     backgroundColor: "#081A34",
-    alignItems: "center",
-    justifyContent: "center",
   },
-  header: {
+  safe: {
+    flex: 1,
+  },
+
+  headerWrap: {
     position: "absolute",
-    top: 40,
-    left: 20,
-    right: 20,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    zIndex: 10,
+    top: HEADER_TOP,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 12,
+    zIndex: 20,
   },
+
+  content: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
   ball: {
-    width: W * 0.4,
-    height: W * 0.4,
-    borderRadius: (W * 0.4) / 2,
+    width: BALL_SIZE,
+    height: BALL_SIZE,
+    borderRadius: BALL_SIZE / 2,
     overflow: "hidden",
     elevation: 10,
     shadowColor: "#000",
@@ -151,13 +158,6 @@ const styles = StyleSheet.create({
   },
   gradient: {
     flex: 1,
-    borderRadius: (W * 0.4) / 2,
-  },
-  counter: {
-    position: "absolute",
-    top: 100,
-    color: "#FDD017",
-    fontSize: 18,
-    fontWeight: "600",
+    borderRadius: BALL_SIZE / 2,
   },
 });

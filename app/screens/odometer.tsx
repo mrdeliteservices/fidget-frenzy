@@ -1,15 +1,9 @@
 // Fidget Frenzy – Odometer v0.9-dev (A1 Scaling)
-// MASSIVE TRACK (Proportional Scaling) + TIRE MOVED UP + CAR ON TRACK
-// Input model (stable):
-// - Drag: circular, angle-based (direct control)
-// - Flick: tangent-velocity impulse (works from any flick angle) + fallback
-// - Repeated flicks: additive impulse, clamped (prevents jerk/flip fights)
-// Audio model (stable):
-// - Engine: persistent loop (no restart spam)
-// - Engine: fades out when speed falls below threshold
-// - Brake: hard-cuts engine + plays screech
-//
-// BUGFIX: Stop audio when leaving screen (React Navigation blur) — screen may not unmount.
+// UI PASS (Header Standardization + World Fix)
+// ✅ Replace PremiumHeader with canonical GameHeader (Slider/Spinner standard)
+// ✅ Replace warm cream world background with nostalgia orange/yellow gradient
+// ✅ Preserve all physics/audio/gesture logic (unchanged)
+// NOTE: No refactors/cleanup beyond UI wrapper swap + background palette change.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -20,6 +14,7 @@ import {
   LayoutChangeEvent,
   Dimensions,
   SafeAreaView,
+  TouchableOpacity,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -30,12 +25,15 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
-import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
+import { LinearGradient } from "expo-linear-gradient";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import PremiumStage from "../../components/PremiumStage";
+import GameHeader from "../../components/GameHeader";
+import { frenzyTheme as t } from "../theme/frenzyTheme";
 import {
   preloadSounds,
   playSound,
@@ -77,7 +75,12 @@ const BRAKE_SRC = require("../../assets/sounds/race-car-brake.mp3");
 
 const { height: SCREEN_H } = Dimensions.get("window");
 
-const BRAND = { blue: "#081A34", gold: "#FDD017", silver: "#C0C0C0" };
+// Odometer “nostalgia” world palette (Matchbox/Hot Wheels vibe)
+const ODO_WORLD = {
+  top: "#FFE7A6", // warm yellow
+  mid: "#FFB547", // orange sherbet
+  bottom: "#FF7A1A", // punchy orange
+};
 
 // ------------------------------------------------------
 //  PHYSICS + AUDIO CONFIG
@@ -130,10 +133,10 @@ const createOvalPoints = (count: number): TrackPoint[] => {
   const cy = 0.5;
 
   for (let i = 0; i < count; i++) {
-    const t = (i / count) * Math.PI * 2;
+    const tt = (i / count) * Math.PI * 2;
     pts.push({
-      x: cx + OVAL_RX * Math.cos(t),
-      y: cy + OVAL_RY * Math.sin(t),
+      x: cx + OVAL_RX * Math.cos(tt),
+      y: cy + OVAL_RY * Math.sin(tt),
     });
   }
 
@@ -151,10 +154,10 @@ const getTrackPose = (
 ) => {
   "worklet";
 
-  let t = progress % 1;
-  if (t < 0) t += 1;
+  let tt = progress % 1;
+  if (tt < 0) tt += 1;
 
-  const scaled = t * TRACK_N;
+  const scaled = tt * TRACK_N;
   const i0 = Math.floor(scaled) % TRACK_N;
   const i1 = (i0 + 1) % TRACK_N;
   const lt = scaled - i0;
@@ -165,7 +168,7 @@ const getTrackPose = (
   const x = (p0.x + (p1.x - p0.x) * lt) * width;
   const y = (p0.y + (p1.y - p0.y) * lt) * height;
 
-  let aheadT = t + 0.008 * direction;
+  let aheadT = tt + 0.008 * direction;
   if (aheadT < 0) aheadT += 1;
   aheadT %= 1;
 
@@ -230,7 +233,6 @@ export default function OdometerScreen() {
 
   const stopAllOdometerAudio = useCallback(() => {
     engineAudioOn.value = 0;
-    // Stop both channels — don't await (can't in cleanup), just fire-and-forget.
     void GlobalSoundManager.stop(ENGINE_ID);
     void GlobalSoundManager.stop(BRAKE_ID);
   }, []);
@@ -238,9 +240,7 @@ export default function OdometerScreen() {
   // ✅ CRITICAL: Stop audio when screen loses focus (navigation blur)
   useFocusEffect(
     useCallback(() => {
-      // on focus: do nothing special
       return () => {
-        // on blur: stop audio immediately
         stopAllOdometerAudio();
       };
     }, [stopAllOdometerAudio])
@@ -322,15 +322,11 @@ export default function OdometerScreen() {
     const dt = (frame.timeSincePreviousFrame ?? 0) / 1000;
     if (dt <= 0) return;
 
-    // Integrate spin
     tireAngle.value += tireOmega.value * dt;
-
-    // Damping
     tireOmega.value *= Math.pow(CONFIG.DAMPING_PER_SECOND, dt);
 
     const absOmega = Math.abs(tireOmega.value);
 
-    // Fade out engine earlier so it doesn't roar when crawling
     if (
       engineAudioOn.value === 1 &&
       !isBraking.value &&
@@ -341,7 +337,6 @@ export default function OdometerScreen() {
       runOnJS(stopEngineFade)();
     }
 
-    // Stop completely
     if (absOmega < CONFIG.OMEGA_STOP) {
       if (tireOmega.value !== 0) {
         tireOmega.value = 0;
@@ -351,16 +346,14 @@ export default function OdometerScreen() {
       }
     }
 
-    // Map omega -> speed
     const spinSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
 
-    // Brake decel
     if (isBraking.value) {
       brakeElapsed.value += dt;
-      const t = Math.min(brakeElapsed.value / BRAKE_DURATION_SEC, 1);
-      carSpeed.value = brakeStartSpeed.value * (1 - t);
+      const tt = Math.min(brakeElapsed.value / BRAKE_DURATION_SEC, 1);
+      carSpeed.value = brakeStartSpeed.value * (1 - tt);
 
-      if (t >= 1) {
+      if (tt >= 1) {
         carSpeed.value = 0;
         isBraking.value = false;
       }
@@ -374,12 +367,10 @@ export default function OdometerScreen() {
 
     speedFactor.value = carSpeed.value;
 
-    // Advance along track
     const lapsPerSec =
       CONFIG.LAPS_PER_SECOND_AT_MAX * carSpeed.value * carDirection.value;
     lapProgress.value = (lapProgress.value + lapsPerSec * dt + 1) % 1;
 
-    // Mileage
     const milesPerSec = CONFIG.MILES_PER_SECOND_AT_MAX * carSpeed.value;
     totalMiles.value += milesPerSec * dt;
 
@@ -405,12 +396,10 @@ export default function OdometerScreen() {
 
       isDragging.value = true;
 
-      // Establish baseline touch angle for drag
       const dx = e.x - TIRE_RADIUS;
       const dy = e.y - TIRE_RADIUS;
       dragLastTouchAngle.value = Math.atan2(dy, dx);
 
-      // Drag should feel direct, so we take control (but we do NOT stop engine here)
       tireOmega.value = 0;
     })
     .onChange((e) => {
@@ -429,7 +418,6 @@ export default function OdometerScreen() {
 
       const deltaDeg = (delta * 180) / Math.PI;
 
-      // Manual spin / movement
       tireAngle.value += deltaDeg;
 
       const lapDelta = deltaDeg * LAPS_PER_DEGREE;
@@ -445,22 +433,19 @@ export default function OdometerScreen() {
 
       isDragging.value = false;
 
-      // ---- STABLE FLICK IMPULSE (angle independent) ----
       const dx = e.x - TIRE_RADIUS;
       const dy = e.y - TIRE_RADIUS;
 
       const r = Math.max(MIN_FLICK_RADIUS_PX, Math.sqrt(dx * dx + dy * dy));
       const theta = Math.atan2(dy, dx);
 
-      const vx = e.velocityX || 0; // px/sec
-      const vy = e.velocityY || 0; // px/sec
+      const vx = e.velocityX || 0;
+      const vy = e.velocityY || 0;
 
-      // Tangent unit vector: (-sinθ, cosθ)
-      const tangentV = vx * (-Math.sin(theta)) + vy * Math.cos(theta); // px/sec
+      const tangentV = vx * (-Math.sin(theta)) + vy * Math.cos(theta);
       const omegaRad = tangentV / r;
       const omegaTangentDeg = (omegaRad * 180) / Math.PI;
 
-      // ✅ Fallback ONLY if tangent is basically zero (prevents sign fights)
       let omegaDeg = omegaTangentDeg;
       if (Math.abs(omegaDeg) < 25) {
         omegaDeg = vx * CONFIG.FLICK_VX_TO_DEG_PER_SEC;
@@ -468,16 +453,12 @@ export default function OdometerScreen() {
 
       if (Math.abs(omegaDeg) < CONFIG.FLICK_MIN_THRESHOLD) return;
 
-      // Add impulse (smooth repeated flicks), clamp
       let nextOmega = clamp(
         tireOmega.value + omegaDeg,
         -CONFIG.MAX_OMEGA,
         CONFIG.MAX_OMEGA
       );
 
-      // ✅ No accidental snap-back:
-      // If we're already spinning and this flick would reverse direction,
-      // require a *strong* opposite impulse; otherwise, damp without flipping.
       const cur = tireOmega.value;
       const curAbs = Math.abs(cur);
 
@@ -488,14 +469,12 @@ export default function OdometerScreen() {
         const required = curAbs * REVERSAL_ALLOW_RATIO + REVERSAL_ALLOW_BONUS;
 
         if (Math.abs(omegaDeg) < required) {
-          // treat as a "bad flick" that slightly slows, but doesn't reverse
           nextOmega = clamp(
             cur + omegaDeg * 0.25,
             -CONFIG.MAX_OMEGA,
             CONFIG.MAX_OMEGA
           );
 
-          // last resort: if it still flipped, just damp current direction
           if (Math.sign(nextOmega) !== Math.sign(cur)) {
             nextOmega = cur * 0.85;
           }
@@ -541,7 +520,6 @@ export default function OdometerScreen() {
 
       tireOmega.value = 0;
 
-      // Brake hard-cuts engine instantly
       runOnJS(stopEngineInstant)();
       runOnJS(playBrake)();
     });
@@ -563,12 +541,7 @@ export default function OdometerScreen() {
 
     const direction = carDirection.value;
 
-    const { x, y, headingRad } = getTrackPose(
-      lapProgress.value,
-      w,
-      h,
-      direction
-    );
+    const { x, y, headingRad } = getTrackPose(lapProgress.value, w, h, direction);
 
     const headingDeg = (headingRad * 180) / Math.PI - 90;
 
@@ -590,123 +563,111 @@ export default function OdometerScreen() {
   // --------------------------------------------------
   return (
     <FullscreenWrapper>
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.container}>
-          <View style={styles.headerRow}>
-            <BackButton />
-            <View style={styles.mileageBlock}>
-              <Text style={styles.mileageText}>{formattedMileage}</Text>
-              <Text style={styles.mileageLabel}>ODOMETER</Text>
-            </View>
-            <Ionicons
-              name="settings-sharp"
-              size={26}
-              color={BRAND.silver}
-              onPress={() => setSettingsVisible(true)}
+      <View style={styles.root}>
+        <SafeAreaView style={styles.safe}>
+          {/* Nostalgia “world” background */}
+          <LinearGradient
+            colors={[ODO_WORLD.top, ODO_WORLD.mid, ODO_WORLD.bottom]}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+
+          {/* Canonical header (same pattern as Spinner/Balloon) */}
+          <View style={styles.headerWrap} pointerEvents="box-none">
+            <GameHeader
+              left={<BackButton />}
+              centerLabel="Miles:"
+              centerValue={formattedMileage}
+              onPressSettings={() => setSettingsVisible(true)}
             />
           </View>
 
-          <View style={styles.topDivider} />
+          {/* Stage */}
+          <View style={styles.stageWrap}>
+            <PremiumStage>
+              <View style={styles.content} pointerEvents="box-none">
+                <View
+                  style={styles.trackWrapper}
+                  onLayout={onTrackLayout}
+                  pointerEvents="none"
+                >
+                  <Image
+                    source={TRACK_SRC}
+                    style={styles.trackImage}
+                    resizeMode="contain"
+                  />
+                  <AnimatedImage
+                    source={CAR_SRC}
+                    style={[styles.carBase, carStyle]}
+                    resizeMode="contain"
+                  />
+                </View>
 
-          <View style={styles.content} pointerEvents="box-none">
-            <View
-              style={styles.trackWrapper}
-              onLayout={onTrackLayout}
-              pointerEvents="none"
-            >
-              <Image
-                source={TRACK_SRC}
-                style={styles.trackImage}
-                resizeMode="contain"
-              />
-              <AnimatedImage
-                source={CAR_SRC}
-                style={[styles.carBase, carStyle]}
-                resizeMode="contain"
-              />
-            </View>
+                <View style={styles.tireWrapper}>
+                  <GestureDetector gesture={combinedGesture}>
+                    <AnimatedImage
+                      source={TIRE_SRC}
+                      style={[styles.tireImage, tireStyle]}
+                      resizeMode="contain"
+                    />
+                  </GestureDetector>
+                </View>
+              </View>
 
-            <View style={styles.tireWrapper}>
-              <GestureDetector gesture={combinedGesture}>
-                <AnimatedImage
-                  source={TIRE_SRC}
-                  style={[styles.tireImage, tireStyle]}
-                  resizeMode="contain"
-                />
-              </GestureDetector>
-            </View>
+              <SettingsModal
+                visible={settingsVisible}
+                onClose={() => setSettingsVisible(false)}
+                onReset={() => {
+                  tireAngle.value = 0;
+                  tireOmega.value = 0;
+                  lapProgress.value = 0;
+                  totalMiles.value = 0;
+                  lastMileageInt.value = 0;
+                  speedFactor.value = 0;
+
+                  isBraking.value = false;
+                  carSpeed.value = 0;
+                  carDirection.value = 1;
+                  brakeStartSpeed.value = 0;
+                  brakeElapsed.value = 0;
+
+                  setMileage(0);
+                  stopEngineInstant();
+                }}
+                soundOn={soundOn}
+                setSoundOn={setSoundOn}
+              />
+            </PremiumStage>
           </View>
-
-          <SettingsModal
-            visible={settingsVisible}
-            onClose={() => setSettingsVisible(false)}
-            onReset={() => {
-              tireAngle.value = 0;
-              tireOmega.value = 0;
-              lapProgress.value = 0;
-              totalMiles.value = 0;
-              lastMileageInt.value = 0;
-              speedFactor.value = 0;
-
-              isBraking.value = false;
-              carSpeed.value = 0;
-              carDirection.value = 1;
-              brakeStartSpeed.value = 0;
-              brakeElapsed.value = 0;
-
-              setMileage(0);
-              stopEngineInstant();
-            }}
-            soundOn={soundOn}
-            setSoundOn={setSoundOn}
-          />
-        </View>
-      </SafeAreaView>
+        </SafeAreaView>
+      </View>
     </FullscreenWrapper>
   );
 }
 
 // --------------------------------------------------
-// STYLES
+// STYLES (UI only)
 // --------------------------------------------------
 const styles = StyleSheet.create({
-  safeArea: {
+  root: { flex: 1 },
+  safe: { flex: 1 },
+
+  // Canonical header anchor (matches Spinner/Balloon)
+  headerWrap: {
+    position: "absolute",
+    top: 65,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
+
+  stageWrap: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
-  container: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-  },
-
-  headerRow: {
-    marginTop: 4,
-    marginHorizontal: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-
-  topDivider: {
-    height: 2,
-    width: "100%",
-    backgroundColor: BRAND.blue,
-    marginTop: 6,
-  },
-
-  mileageBlock: {
-    alignItems: "center",
-  },
-  mileageText: {
-    color: BRAND.gold,
-    fontSize: 28,
-    fontWeight: "800",
-    letterSpacing: 4,
-  },
-  mileageLabel: {
-    color: "rgba(0,0,0,0.5)",
-    fontSize: 14,
-    marginTop: 4,
+    paddingHorizontal: t.spacing.stageMarginH,
+    // give stage breathing room so it doesn't hide under the header
+    paddingTop: t.spacing.stageMarginTop + 72,
+    paddingBottom: t.spacing.stageMarginBottom,
   },
 
   content: {

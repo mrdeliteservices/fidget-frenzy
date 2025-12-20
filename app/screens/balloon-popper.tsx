@@ -14,21 +14,22 @@ import {
   Image,
   Pressable,
   StyleSheet,
-  Text,
   View,
   TouchableOpacity,
+  SafeAreaView,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import BackButton from "../../components/BackButton";
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import SettingsModal from "../../components/SettingsModal";
+import GameHeader from "../../components/GameHeader";
 import { playSound, preloadSounds } from "../../lib/soundManager";
 
 import {
   balloonImages,
   cloudImages,
-  popSounds,     // array of AV sources
-  slashSounds,   // array of AV sources
+  popSounds, // array of AV sources
+  slashSounds, // array of AV sources
   type BalloonColor,
 } from "../../assets";
 import { rand, pick } from "../../utils/random";
@@ -136,9 +137,7 @@ export default function BalloonPopper() {
       scale,
       speed,
     };
-    setClouds((prev) =>
-      prev.length > 12 ? [...prev.slice(2), c] : [...prev, c]
-    );
+    setClouds((prev) => (prev.length > 12 ? [...prev.slice(2), c] : [...prev, c]));
   }, []);
 
   // ---------- Main loop ----------
@@ -201,9 +200,7 @@ export default function BalloonPopper() {
               duration: 120,
               useNativeDriver: true,
             }).start(() => {
-              setBalloons((current) =>
-                current.filter((item) => item.id !== b.id)
-              );
+              setBalloons((current) => current.filter((item) => item.id !== b.id));
             });
             return copy;
           }
@@ -225,78 +222,81 @@ export default function BalloonPopper() {
   // ---------- Render ----------
   return (
     <FullscreenWrapper>
-      <View style={styles.container}>
-        {/* Background */}
-        <LinearGradient
-          colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
-          style={StyleSheet.absoluteFill}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-        />
+      <View style={styles.root}>
+        <SafeAreaView style={styles.safe}>
+          {/* Background */}
+          <LinearGradient
+            colors={["#0a1f5e", "#1b3e9b", "#78b7ff"]}
+            style={StyleSheet.absoluteFill}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+          />
 
-        {/* Header */}
-        <View style={styles.header}>
-          <BackButton />
-          <Text style={styles.score}>Score: {score}</Text>
-          <TouchableOpacity onPress={() => setSettingsOpen(true)}>
-            <Text style={styles.gear}>⚙️</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Clouds */}
-        {clouds.map((c) => {
-          const src: any = cloudImages[c.imgIndex];
-          return (
-            <Image
-              key={c.id}
-              source={src}
-              style={[
-                styles.cloud,
-                { left: c.x, top: c.y, transform: [{ scale: c.scale }] },
-              ]}
-              resizeMode="contain"
+          {/* HEADER: canonical GameHeader */}
+          <View style={styles.headerWrap} pointerEvents="box-none">
+            <GameHeader
+              left={<BackButton />}
+              centerLabel="Score:"
+              centerValue={score}
+              onPressSettings={() => setSettingsOpen(true)}
             />
-          );
-        })}
+          </View>
 
-        {/* Balloons */}
-        <Pressable
-          style={StyleSheet.absoluteFill}
-          onPress={handlePress}
-          android_disableSound={true}
-        >
-          {balloons.map((b) => {
-            const src: any = balloonImages[b.color];
-            const left = b.x - b.size / 2;
-            const top = b.y - b.size / 2;
+          {/* Clouds */}
+          {clouds.map((c) => {
+            const src: any = cloudImages[c.imgIndex];
             return (
-              <Animated.Image
-                key={b.id}
+              <Image
+                key={c.id}
                 source={src}
                 style={[
-                  styles.balloon,
-                  {
-                    width: b.size,
-                    height: b.size,
-                    left,
-                    top,
-                    transform: [{ scale: b.scale }],
-                  },
+                  styles.cloud,
+                  { left: c.x, top: c.y, transform: [{ scale: c.scale }] },
                 ]}
                 resizeMode="contain"
               />
             );
           })}
-        </Pressable>
 
-        {/* Settings modal */}
-        <SettingsModal
-          visible={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          onReset={reset}
-          soundOn={soundOn}
-          setSoundOn={setSoundOn}
-        />
+          {/* Balloons */}
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={handlePress}
+            android_disableSound={true}
+          >
+            {balloons.map((b) => {
+              const src: any = balloonImages[b.color];
+              const left = b.x - b.size / 2;
+              const top = b.y - b.size / 2;
+              return (
+                <Animated.Image
+                  key={b.id}
+                  source={src}
+                  style={[
+                    styles.balloon,
+                    {
+                      width: b.size,
+                      height: b.size,
+                      left,
+                      top,
+                      transform: [{ scale: b.scale }],
+                    },
+                  ]}
+                  resizeMode="contain"
+                />
+              );
+            })}
+          </Pressable>
+
+          {/* Settings modal */}
+          <SettingsModal
+            visible={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            onReset={reset}
+            soundOn={soundOn}
+            setSoundOn={setSoundOn}
+          />
+        </SafeAreaView>
       </View>
     </FullscreenWrapper>
   );
@@ -304,17 +304,17 @@ export default function BalloonPopper() {
 
 // ---------- Styles ----------
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  header: {
+  root: { flex: 1 },
+  safe: { flex: 1 },
+
+  headerWrap: {
     position: "absolute",
-    top: 40,
-    left: 15,
-    right: 15,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 10,
+    top: 65,
+    left: 0,
+    right: 0,
+    zIndex: 20,
   },
+
   cloud: {
     position: "absolute",
     width: 220,
@@ -322,13 +322,4 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   balloon: { position: "absolute" },
-  score: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "700",
-    textShadowColor: "#000",
-    textShadowOffset: { width: 1, height: 1 },
-    textShadowRadius: 3,
-  },
-  gear: { fontSize: 26, color: "#FDD017" },
 });

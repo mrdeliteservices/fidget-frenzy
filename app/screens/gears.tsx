@@ -1,30 +1,31 @@
 // app/screens/gears.tsx
 // Fidget Frenzy — Gears (v0.9-dev)
-// ✅ Header (Back + Power + Settings)
+// ✅ Header standardized via GameHeader (Back + Power + Settings)
 // ✅ Wind/unwind preserved (NO modulo/clamp; extrapolate extend)
 // ✅ Only winding/unwinding audio (no click)
 // ✅ Random gear network each mount + reset (safe layout, meshes correctly)
 // ✅ More top density: repeat small gears + stronger upward placement bias
 // ✅ Phase 2: Prevent multi-contact (single authority parent per follower)
+// ✅ UI PASS: Stage backlight/glow to fix dark-on-dark visibility (no physics changes)
+// ✅ FIX: Stop winding loop when drag motion pauses (prevents “sound continues” bug)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
-  Text,
   StyleSheet,
   Animated,
   Easing,
   GestureResponderEvent,
-  TouchableOpacity,
   SafeAreaView,
   ImageSourcePropType,
 } from "react-native";
 import { Audio } from "expo-av";
-import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import GameHeader from "../../components/GameHeader";
 
 type SoundKey = "winding" | "unwinding";
 type Mode = "idle" | "dragging" | "unwinding";
@@ -246,12 +247,8 @@ export default function Gears() {
   const driverCenterY = stageSize.h > 0 ? stageSize.h - DRIVER_BOTTOM_PAD_PX : 0;
 
   // ---------------- Assets ----------------
-  const DRIVER_SOURCE = useMemo(
-    () => require("../../assets/gears/gear_gold_large.png"),
-    []
-  );
+  const DRIVER_SOURCE = useMemo(() => require("../../assets/gears/gear_gold_large.png"), []);
 
-  // Base (unique) assets
   const BASE_ASSETS: GearAsset[] = useMemo(
     () => [
       { id: "silver_large", source: require("../../assets/gears/gear_silver_large.png"), tier: "large" },
@@ -269,7 +266,6 @@ export default function Gears() {
 
   // ---------------- Helpers ----------------
   const randomIn = (min: number, max: number) => min + Math.random() * (max - min);
-  const deg2rad = (deg: number) => (deg * Math.PI) / 180;
 
   const dist = (x1: number, y1: number, x2: number, y2: number) =>
     Math.hypot(x1 - x2, y1 - y2);
@@ -277,7 +273,7 @@ export default function Gears() {
   const pickFollowerSize = (tier: GearAsset["tier"]) => {
     if (tier === "large") return Math.round(randomIn(175, 205));
     if (tier === "medium") return Math.round(randomIn(130, 160));
-    return Math.round(randomIn(90, 120)); // slightly smaller to pack more
+    return Math.round(randomIn(90, 120));
   };
 
   // ---------------- Wind/unwind feel knobs ----------------
@@ -287,8 +283,10 @@ export default function Gears() {
   const UNWIND_MIN_MS = 260;
   const UNWIND_MAX_MS = 30000;
 
-  const clamp = (n: number, lo: number, hi: number) =>
-    Math.max(lo, Math.min(hi, n));
+  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+  // ✅ Drag idle stop: if finger is down but not moving, stop winding loop
+  const DRAG_IDLE_STOP_MS = 200;
 
   // ---------------- Responder (touch wrapper does NOT rotate) ----------------
   const touchRef = useRef({
@@ -304,6 +302,7 @@ export default function Gears() {
     totalTurns: 0,
 
     longPressTimer: null as ReturnType<typeof setTimeout> | null,
+    idleStopTimer: null as ReturnType<typeof setTimeout> | null,
   });
 
   const MOVE_THRESHOLD = 18;
@@ -370,6 +369,12 @@ export default function Gears() {
       touchRef.current.moved = false;
       touchRef.current.longPressFired = false;
 
+      // clear any prior idle timer
+      if (touchRef.current.idleStopTimer) {
+        clearTimeout(touchRef.current.idleStopTimer);
+        touchRef.current.idleStopTimer = null;
+      }
+
       touchRef.current.startPageX = evt.nativeEvent.pageX ?? 0;
       touchRef.current.startPageY = evt.nativeEvent.pageY ?? 0;
 
@@ -392,10 +397,15 @@ export default function Gears() {
         if (!touchRef.current.active) return;
         if (touchRef.current.moved) return;
         touchRef.current.longPressFired = true;
+
+        // long press is “reverse” only — ensure no loop is playing
+        void safeStop("winding");
+        void safeStop("unwinding");
+
         reverseNow();
       }, LONG_PRESS_MS);
     },
-    [angleFromEvent, reverseNow, spin]
+    [angleFromEvent, reverseNow, safeStop, spin]
   );
 
   const onGoldMove = useCallback(
@@ -435,6 +445,19 @@ export default function Gears() {
 
       if (touchRef.current.longPressFired) return;
 
+      // ✅ movement happened — ensure winding is running (in case we idled it off)
+      void safeStartLoop("winding");
+
+      // ✅ reset “idle stop” timer so if finger stops moving, winding stops
+      if (touchRef.current.idleStopTimer) clearTimeout(touchRef.current.idleStopTimer);
+      touchRef.current.idleStopTimer = setTimeout(() => {
+        // only stop if still dragging and still touching
+        if (!touchRef.current.active) return;
+        if (modeRef.current !== "dragging") return;
+        if (touchRef.current.longPressFired) return;
+        void safeStop("winding");
+      }, DRAG_IDLE_STOP_MS);
+
       const a = angleFromEvent(evt);
 
       const dA = normalizeDelta(a - touchRef.current.lastAngle);
@@ -446,7 +469,17 @@ export default function Gears() {
       const dirMul = direction === 1 ? 1 : -1;
       spin.setValue(touchRef.current.startSpin + touchRef.current.totalTurns * dirMul);
     },
-    [WIND_SENSITIVITY, angleFromEvent, direction, pause, safeStartLoop, safeStop, setModeNow, spin]
+    [
+      DRAG_IDLE_STOP_MS,
+      WIND_SENSITIVITY,
+      angleFromEvent,
+      direction,
+      pause,
+      safeStartLoop,
+      safeStop,
+      setModeNow,
+      spin,
+    ]
   );
 
   const onGoldRelease = useCallback(() => {
@@ -459,12 +492,25 @@ export default function Gears() {
       touchRef.current.longPressTimer = null;
     }
 
+    if (touchRef.current.idleStopTimer) {
+      clearTimeout(touchRef.current.idleStopTimer);
+      touchRef.current.idleStopTimer = null;
+    }
+
     if (touchRef.current.longPressFired) {
+      // long-press was a “reverse” action only — ensure silence
+      void safeStop("winding");
+      void safeStop("unwinding");
       setModeNow("idle");
       return;
     }
 
-    if (!touchRef.current.moved) return;
+    // If we never crossed move threshold, still stop any accidental loop and bail
+    if (!touchRef.current.moved) {
+      void safeStop("winding");
+      void safeStop("unwinding");
+      return;
+    }
 
     setModeNow("unwinding");
 
@@ -495,14 +541,11 @@ export default function Gears() {
       const margin = 18;
       const biteBase = 7;
 
-      // Phase 2: Reject any follower placement that would become tangent/near-tangent
-      // to ANY gear other than its chosen parent (prevents constraint loops).
-      const MULTI_CONTACT_TOLERANCE_PX = 6; // small gap required vs non-parent gears
+      const MULTI_CONTACT_TOLERANCE_PX = 6;
 
       const withinBounds = (cx: number, cy: number, r: number) =>
         cx - r >= margin && cx + r <= w - margin && cy - r >= margin && cy + r <= h - margin;
 
-      // Phase 2: single-authority validation
       const violatesSingleContact = (
         cx: number,
         cy: number,
@@ -511,28 +554,23 @@ export default function Gears() {
         existing: PlacedGear[]
       ) => {
         for (const g of existing) {
-          if (g.id === parentId) continue; // parent contact is allowed (meshing via bite)
+          if (g.id === parentId) continue;
           const r2 = g.size / 2;
           const d = dist(cx, cy, g.cx, g.cy);
-
-          // Disallow tangent/near-tangent/overlap with any non-parent gear.
-          // If d <= rNew + r2 => tangent or overlap. Add tolerance to avoid "almost tangent" jitter contacts.
           if (d <= rNew + r2 + MULTI_CONTACT_TOLERANCE_PX) return true;
         }
         return false;
       };
 
-      // Stronger upward bias to fill the top
       const pickAngleDeg = () => {
         const roll = Math.random();
-        if (roll < 0.78) return randomIn(-175, 35); // mostly upper
-        if (roll < 0.95) return randomIn(35, 165); // sides
-        return randomIn(165, 330); // rare lower
+        if (roll < 0.78) return randomIn(-175, 35);
+        if (roll < 0.95) return randomIn(35, 165);
+        return randomIn(165, 330);
       };
 
-      // === follower pool: repeat small gears ===
-      const SMALL_DUPES = 2; // each small gear appears twice
-      const EXTRA_RANDOM_SMALL = 2; // plus a couple more smalls
+      const SMALL_DUPES = 2;
+      const EXTRA_RANDOM_SMALL = 2;
 
       const large = BASE_ASSETS.filter((a) => a.tier === "large");
       const medium = BASE_ASSETS.filter((a) => a.tier === "medium");
@@ -540,18 +578,15 @@ export default function Gears() {
 
       const followerPool: GearAsset[] = [];
 
-      // keep one large + one medium as anchors
       if (large[0]) followerPool.push({ ...large[0] });
       if (medium[0]) followerPool.push({ ...medium[0] });
 
-      // repeat smalls
       for (const s of smalls) {
         for (let i = 0; i < SMALL_DUPES; i++) {
           followerPool.push({ ...s, id: `${s.id}_dup${i + 1}` });
         }
       }
 
-      // sprinkle extras (random smalls)
       for (let i = 0; i < EXTRA_RANDOM_SMALL; i++) {
         const pick = smalls[Math.floor(randomIn(0, smalls.length))];
         followerPool.push({ ...pick, id: `${pick.id}_extra${i + 1}` });
@@ -566,11 +601,9 @@ export default function Gears() {
 
         let best: PlacedGear | null = null;
 
-        // Increased attempts because Phase 2 rejection is stricter (keeps density without cheating)
         for (let t = 0; t < 220; t++) {
-          // bias parent selection away from always using driver
           const parent =
-            Math.random() < 0.50
+            Math.random() < 0.5
               ? placedGears[0]
               : placedGears[Math.floor(randomIn(0, placedGears.length))];
 
@@ -583,8 +616,6 @@ export default function Gears() {
           const cy = parent.cy + Math.sin(th) * centerDist;
 
           if (!withinBounds(cx, cy, rNew)) continue;
-
-          // Phase 2: reject if this follower would touch ANY other gear besides its chosen parent
           if (violatesSingleContact(cx, cy, rNew, parent.id, placedGears)) continue;
 
           const ratio = parent.size / size;
@@ -627,6 +658,15 @@ export default function Gears() {
     setModeNow("idle");
     setPower(0);
 
+    if (touchRef.current.longPressTimer) {
+      clearTimeout(touchRef.current.longPressTimer);
+      touchRef.current.longPressTimer = null;
+    }
+    if (touchRef.current.idleStopTimer) {
+      clearTimeout(touchRef.current.idleStopTimer);
+      touchRef.current.idleStopTimer = null;
+    }
+
     if (stageSize.w > 0 && stageSize.h > 0) {
       generateLayout(stageSize.w, stageSize.h);
     }
@@ -636,16 +676,14 @@ export default function Gears() {
     <FullscreenWrapper>
       <View style={[styles.root, { backgroundColor: "#0B0B0F" }]}>
         <SafeAreaView style={{ flex: 1 }}>
-          {/* HEADER */}
-          <View style={styles.topBar}>
-            <BackButton />
-            <View style={styles.counterPill}>
-              <Text style={styles.counterLabel}>Power:</Text>
-              <Text style={styles.counterTxt}>{(power / 10).toFixed(1)}</Text>
-            </View>
-            <TouchableOpacity onPress={() => setSettingsOpen(true)} style={styles.settingsBtn}>
-              <Ionicons name="settings-sharp" size={26} color="#C0C0C0" />
-            </TouchableOpacity>
+          {/* HEADER (standardized) */}
+          <View style={styles.headerWrap}>
+            <GameHeader
+              left={<BackButton />}
+              centerLabel="Power:"
+              centerValue={power / 10}
+              onPressSettings={() => setSettingsOpen(true)}
+            />
           </View>
 
           {/* STAGE */}
@@ -656,6 +694,16 @@ export default function Gears() {
               setStageSize({ w: width, h: height });
             }}
           >
+            {/* Stage backlight / glow (visual only) */}
+            <LinearGradient
+              pointerEvents="none"
+              colors={["rgba(255,255,255,0.10)", "rgba(255,255,255,0.00)"]}
+              start={{ x: 0.5, y: 0 }}
+              end={{ x: 0.5, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <View pointerEvents="none" style={styles.stageGlow} />
+
             {/* Followers (network) */}
             {placed.map((g) => {
               const rotate = rotateForMultiplier(g.mult);
@@ -729,41 +777,29 @@ export default function Gears() {
 const styles = StyleSheet.create({
   root: { flex: 1 },
 
-  topBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
+  headerWrap: {
     paddingHorizontal: 12,
     paddingTop: 4,
   },
-  settingsBtn: { paddingHorizontal: 10, paddingVertical: 6 },
-
-  counterPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    minWidth: 84,
-    paddingHorizontal: 14,
-    height: 32,
-    borderRadius: 16,
-    justifyContent: "center",
-    backgroundColor: "rgba(0,0,0,0.25)",
-  },
-  counterLabel: {
-    color: "#fff",
-    fontWeight: "700",
-    fontSize: 14,
-    marginRight: 6,
-  },
-  counterTxt: { color: "#fff", fontWeight: "800", fontSize: 16 },
 
   stage: {
     flex: 1,
     borderRadius: 16,
-    backgroundColor: "#12121A",
+    backgroundColor: "#161824",
     overflow: "hidden",
     marginHorizontal: 12,
     marginTop: 10,
     marginBottom: 12,
+  },
+
+  stageGlow: {
+    ...StyleSheet.absoluteFillObject,
+    borderRadius: 16,
+    backgroundColor: "rgba(253, 208, 23, 0.035)",
+    shadowColor: "#FDD017",
+    shadowOpacity: 0.22,
+    shadowRadius: 22,
+    shadowOffset: { width: 0, height: 10 },
   },
 
   img: { position: "absolute" },
