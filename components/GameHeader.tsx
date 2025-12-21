@@ -11,7 +11,7 @@ type Props = {
   style?: ViewStyle;
 
   // optional polish hooks (not required day-1)
-  settingsIconColor?: string;             // default matches Slider
+  settingsIconColor?: string;             // default matches standard 
   pillVariant?: "dark" | "light";         // default "dark"
 };
 

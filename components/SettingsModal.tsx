@@ -1,6 +1,6 @@
 // Fidget Frenzy – SettingsModal v0.9-dev unified
 // Expo SDK 54 / RN 0.81
-// Unified across all Frenzy modules (Stress Ball, Slider, Spinner, etc.)
+// Unified across all Frenzy modules (Stress Ball, Spinner, etc.)
 
 import React from "react";
 import {

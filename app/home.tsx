@@ -69,9 +69,9 @@ const fidgets = [
   },
   {
     id: "4",
-    name: "Slider Switch",
-    route: "/screens/slider-switch",
-    icon: require("../assets/icons/slider.png"),
+    name: "Light Switch",
+    route: "/screens/light-switch",
+    icon: require("../assets/icons/light.png"),
     accent: "#FF7A3D", // orange
   },
   {
@@ -145,7 +145,7 @@ export default function Home() {
         router.prefetch("/screens/spinner"),
         router.prefetch("/screens/balloon-popper"),
         router.prefetch("/screens/stress-ball"),
-        router.prefetch("/screens/slider-switch"),
+        router.prefetch("/screens/light-switch"),
         router.prefetch("/screens/odometer"),
         router.prefetch("/screens/gears"),
       ]);

@@ -1,6 +1,6 @@
 // Fidget Frenzy – Odometer v0.9-dev (A1 Scaling)
 // UI PASS (Header Standardization + World Fix)
-// ✅ Replace PremiumHeader with canonical GameHeader (Slider/Spinner standard)
+// ✅ Replace PremiumHeader with canonical GameHeader Standard
 // ✅ Replace warm cream world background with nostalgia orange/yellow gradient
 // ✅ Preserve all physics/audio/gesture logic (unchanged)
 // NOTE: No refactors/cleanup beyond UI wrapper swap + background palette change.

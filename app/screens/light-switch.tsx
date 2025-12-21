@@ -1,5 +1,5 @@
-// app/screens/slider-switch.tsx
-// Fidget Frenzy — Slider Switch (v0.9-dev WALL + BUTTON, RAPID FIRE + "Clicks:")
+// app/screens/light-switch.tsx
+// Fidget Frenzy — Light Switch (v0.9-dev WALL + BUTTON, RAPID FIRE + "Clicks:")
 //
 // Based on the 900+ line version you confirmed matches.
 // Changes from that version:
@@ -62,7 +62,7 @@ const DEBUG = false; // set to true if you ever want to tune again
 const CEILING_H = 10;
 const CEILING_MARGIN_B = 4;
 
-export default function SliderSwitch() {
+export default function LightSwitch() {
   const [isOn, setIsOn] = useState(false);
   const [count, setCount] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
