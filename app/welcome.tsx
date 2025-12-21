@@ -1,253 +1,170 @@
-import React, { useEffect, useRef } from "react";
+import React, { useRef, useEffect, useCallback, useState } from "react";
 import {
   View,
   Text,
   StyleSheet,
   Image,
-  TouchableWithoutFeedback,
+  Pressable,
+  Dimensions,
   Animated,
-  Easing,
-  SafeAreaView,
 } from "react-native";
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
-import FullscreenWrapper from "../components/FullscreenWrapper"; // ✅ new import
+import { Audio } from "expo-av";
 
-const BRAND = { blue: "#0B1E3D", gold: "#FDD017" };
+const { width: W, height: H } = Dimensions.get("window");
+
+const TAP_SOUND = require("../assets/sounds/switch-click.mp3");
 
 const TAGLINES = [
-  "Tap. Spin. Pop. Repeat.",
-  "Settle your hands. Free your mind.",
-  "Little motions. Big calm.",
-  "Spin down the static.",
-  "Quiet the fidget. Keep the flow.",
+  "Find your focus",
+  "Tap away your stress",
+  "Relax. Tap. Repeat.",
+  "Because everyone needs a little Frenzy",
 ];
-const SUBLINE = "Tiny tools to calm busy hands.";
+
+const SUBLINE = "Created by MRD Elite Services";
 
 export default function Welcome() {
   const router = useRouter();
-  const logoScale = useRef(new Animated.Value(0.85)).current;
-  const logoOpacity = useRef(new Animated.Value(0)).current;
-  const glowOpacity = useRef(new Animated.Value(0)).current;
-  const taglineOpacity = useRef(new Animated.Value(0)).current;
-  const taglineTranslate = useRef(new Animated.Value(10)).current;
-  const footerOpacity = useRef(new Animated.Value(0)).current;
+  const [index, setIndex] = useState(0);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(20)).current;
+  const soundRef = useRef<Audio.Sound | null>(null);
 
-  const taglineIndex = useRef(0);
-  const taglineText = useRef(TAGLINES[0]);
-  const [, forceRender] = React.useReducer((x) => x + 1, 0);
+  // 🔊 preload sound
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const { sound } = await Audio.Sound.createAsync(TAP_SOUND);
+        if (mounted) soundRef.current = sound;
+      } catch (err) {
+        console.warn("Sound load error:", err);
+      }
+    })();
+    return () => {
+      mounted = false;
+      if (soundRef.current) soundRef.current.unloadAsync();
+    };
+  }, []);
 
-  const goHome = React.useCallback(() => {
-    Haptics.selectionAsync();
+  // ✨ tagline animation sequence
+  useEffect(() => {
+    const animate = () => {
+      fadeAnim.setValue(0);
+      translateY.setValue(20);
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+        Animated.timing(translateY, {
+          toValue: 0,
+          duration: 800,
+          useNativeDriver: true,
+        }),
+      ]).start(() => {
+        // hold then fade out
+        setTimeout(() => {
+          Animated.timing(fadeAnim, {
+            toValue: 0,
+            duration: 600,
+            useNativeDriver: true,
+          }).start(() => {
+            if (index < TAGLINES.length - 1) {
+              setIndex((prev) => prev + 1);
+            } else {
+              // navigate after final tagline
+              router.replace("/home");
+            }
+          });
+        }, 1200);
+      });
+    };
+    animate();
+  }, [index]);
+
+  const handlePress = useCallback(async () => {
+    try {
+      await Haptics.selectionAsync();
+      if (soundRef.current) await soundRef.current.replayAsync();
+    } catch (err) {
+      console.warn("Play sound error:", err);
+    }
     router.replace("/home");
   }, [router]);
 
-  useEffect(() => {
-    Animated.sequence([
-      Animated.parallel([
-        Animated.timing(logoOpacity, {
-          toValue: 1,
-          duration: 450,
-          useNativeDriver: true,
-          easing: Easing.out(Easing.cubic),
-        }),
-        Animated.spring(logoScale, {
-          toValue: 1,
-          speed: 12,
-          bounciness: 6,
-          useNativeDriver: true,
-        }),
-      ]),
-      Animated.timing(glowOpacity, {
-        toValue: 1,
-        duration: 350,
-        useNativeDriver: true,
-      }),
-    ]).start();
-
-    const rotate = () => {
-      Animated.sequence([
-        Animated.parallel([
-          Animated.timing(taglineOpacity, {
-            toValue: 1,
-            duration: 400,
-            useNativeDriver: true,
-          }),
-          Animated.timing(taglineTranslate, {
-            toValue: 0,
-            duration: 400,
-            useNativeDriver: true,
-          }),
-        ]),
-        Animated.delay(1000),
-        Animated.parallel([
-          Animated.timing(taglineOpacity, {
-            toValue: 0,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-          Animated.timing(taglineTranslate, {
-            toValue: -10,
-            duration: 300,
-            useNativeDriver: true,
-          }),
-        ]),
-      ]).start(({ finished }) => {
-        if (finished) {
-          taglineIndex.current++;
-          if (taglineIndex.current < TAGLINES.length) {
-            taglineText.current = TAGLINES[taglineIndex.current];
-            taglineTranslate.setValue(10);
-            forceRender();
-            rotate();
-          } else {
-            Animated.timing(footerOpacity, {
-              toValue: 1,
-              duration: 700,
-              useNativeDriver: true,
-            }).start(() => {
-              setTimeout(goHome, 1500);
-            });
-          }
-        }
-      });
-    };
-
-    const t = setTimeout(rotate, 400);
-    return () => clearTimeout(t);
-  }, [
-    logoOpacity,
-    logoScale,
-    glowOpacity,
-    taglineOpacity,
-    taglineTranslate,
-    footerOpacity,
-    goHome,
-  ]);
-
   return (
-    <FullscreenWrapper>
-      <TouchableWithoutFeedback onPress={goHome}>
-        <SafeAreaView
-          style={[styles.container, { backgroundColor: BRAND.blue }]}
-        >
-          <View style={styles.center}>
-            <Animated.View
-              pointerEvents="none"
-              style={[
-                styles.glow,
-                {
-                  opacity: glowOpacity,
-                  shadowColor: BRAND.gold,
-                  shadowOffset: { width: 0, height: 0 },
-                  shadowOpacity: 0.45,
-                  shadowRadius: 28,
-                },
-              ]}
-            />
-            <Animated.Image
-              source={require("../assets/brand/fidget-frenzy-logo.png")}
-              style={[
-                styles.logo,
-                { opacity: logoOpacity, transform: [{ scale: logoScale }] },
-              ]}
-              resizeMode="contain"
-            />
-            <Animated.Text
-              style={[
-                styles.tagline,
-                {
-                  opacity: taglineOpacity,
-                  transform: [{ translateY: taglineTranslate }],
-                },
-              ]}
-            >
-              {taglineText.current}
-            </Animated.Text>
-            <Animated.Text
-              style={[
-                styles.subline,
-                {
-                  opacity: taglineOpacity,
-                  transform: [{ translateY: taglineTranslate }],
-                },
-              ]}
-            >
-              {SUBLINE}
-            </Animated.Text>
-            <Animated.Text
-              style={[
-                styles.hint,
-                {
-                  opacity: taglineOpacity,
-                  transform: [{ translateY: taglineTranslate }],
-                },
-              ]}
-            >
-              Tap anywhere to start
-            </Animated.Text>
-          </View>
+    <Pressable style={styles.container} onPress={handlePress}>
+      <View style={styles.center}>
+        <View style={styles.logoWrap}>
+          <Image
+            source={require("../assets/logo.png")}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+        </View>
 
-          <Animated.View style={[styles.footer, { opacity: footerOpacity }]}>
-            <Text style={styles.footerText}>Built with focus by</Text>
-            <Text style={styles.footerBrand}>MRD Elite Studios</Text>
-          </Animated.View>
-        </SafeAreaView>
-      </TouchableWithoutFeedback>
-    </FullscreenWrapper>
+        <Animated.View
+          style={[
+            styles.taglineWrap,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY }],
+            },
+          ]}
+        >
+          <Text style={styles.tagline} numberOfLines={2}>
+            {TAGLINES[index]}
+          </Text>
+          <Text style={styles.subline}>{SUBLINE}</Text>
+        </Animated.View>
+      </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: "space-between" },
+  container: {
+    flex: 1,
+    backgroundColor: "#081A34",
+    justifyContent: "center",
+  },
   center: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     paddingHorizontal: 24,
   },
-  logo: { width: 240, height: 240 },
-  glow: {
-    position: "absolute",
-    width: 280,
-    height: 280,
-    borderRadius: 140,
-    backgroundColor: "transparent",
+  logoWrap: {
+    width: 240,
+    height: 240, // fixed height prevents "jump"
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  logo: {
+    width: 200,
+    height: 200,
+  },
+  taglineWrap: {
+    minHeight: 72,
+    marginTop: 22,
+    paddingHorizontal: 6,
   },
   tagline: {
-    marginTop: 22,
-    color: "#fff",
+    color: "#FFFFFF",
     fontSize: 26,
     fontWeight: "800",
     textAlign: "center",
     letterSpacing: 0.5,
   },
   subline: {
-    marginTop: 10,
-    color: "rgba(255,255,255,0.85)",
-    fontSize: 15,
-    textAlign: "center",
-  },
-  hint: {
-    marginTop: 22,
-    color: "rgba(255,255,255,0.5)",
-    fontSize: 13,
-    letterSpacing: 0.4,
-  },
-  footer: {
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 20,
-  },
-  footerText: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.6)",
-    letterSpacing: 0.3,
-  },
-  footerBrand: {
-    fontSize: 15,
     color: "#FDD017",
-    fontWeight: "700",
-    letterSpacing: 0.5,
+    fontSize: 18,
+    fontWeight: "500",
+    textAlign: "center",
+    marginTop: 4,
   },
 });

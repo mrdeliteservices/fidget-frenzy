@@ -1,6 +1,9 @@
 // app/screens/spinner-screen.tsx
+// Fidget Frenzy – Spinner Screen (v0.8-dev behavior, updated asset name)
+// Physics & interaction logic preserved exactly; audio mapped to whoosh-1.mp3
+
 import React, { useEffect, useRef, useState } from "react";
-import { View, Text, StyleSheet } from "react-native";
+import { View, StyleSheet } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
   runOnJS,
@@ -12,11 +15,12 @@ import Animated, {
 import { Audio } from "expo-av";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
-import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import BackButton from "../../components/BackButton";
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import SettingsModal from "../../components/SettingsModal";
+import GameHeader from "../../components/GameHeader";
 
 // ---------- Config ----------
 const CONFIG = {
@@ -32,21 +36,21 @@ const CONFIG = {
   OMEGA_STOP: 15,
 };
 
-const BRAND = { blue: "#0B1E3D", gold: "#FDD017", silver: "#C0C0C0" };
-
 export default function SpinnerScreen() {
+  const insets = useSafeAreaInsets();
+
   // motion state
-  const angle = useSharedValue(0);                 // total rotation (deg), continuous/unbounded
-  const omega = useSharedValue(0);                 // angular velocity (deg/s)
-  const lastCountAt = useSharedValue(0);           // last angle at which we incremented count (deg)
+  const angle = useSharedValue(0); // total rotation (deg), continuous/unbounded
+  const omega = useSharedValue(0); // angular velocity (deg/s)
+  const lastCountAt = useSharedValue(0); // last angle at which we incremented count (deg)
   const centerX = useSharedValue(0);
   const centerY = useSharedValue(0);
-  const dragStartRotation = useSharedValue(0);     // angle at drag begin
+  const dragStartRotation = useSharedValue(0); // angle at drag begin
   const isDragging = useSharedValue(false);
 
-  // NEW: unwrap support for dragging
-  const prevDragAngle = useSharedValue(0);         // previous raw atan2 (rad)
-  const cumulativeDragDelta = useSharedValue(0);   // accumulated drag delta (deg, continuous)
+  // unwrap support for dragging
+  const prevDragAngle = useSharedValue(0); // previous raw atan2 (rad)
+  const cumulativeDragDelta = useSharedValue(0); // accumulated drag delta (deg, continuous)
 
   const bodyRef = useRef<View>(null);
 
@@ -73,13 +77,19 @@ export default function SpinnerScreen() {
     (async () => {
       try {
         const { sound } = await Audio.Sound.createAsync(
-          require("../../assets/sounds/whoosh-sound-effect-240257.mp3"),
+          require("../../assets/sounds/whoosh-1.mp3"),
           { isLooping: false, volume: 1.0 }
         );
-        if (!cancelled) whooshRef.current = sound;
-        else await sound.unloadAsync();
-      } catch {}
+        if (!cancelled) {
+          whooshRef.current = sound;
+        } else {
+          await sound.unloadAsync();
+        }
+      } catch {
+        // silent fail
+      }
     })();
+
     return () => {
       cancelled = true;
       whooshRef.current?.unloadAsync().catch(() => {});
@@ -91,6 +101,7 @@ export default function SpinnerScreen() {
     if (!mountedRef.current || !soundOn) return;
     const snd = whooshRef.current;
     if (!snd || whooshPlaying.current) return;
+
     try {
       const st = await snd.getStatusAsync();
       if ("isPlaying" in st && st.isPlaying) return;
@@ -174,35 +185,30 @@ export default function SpinnerScreen() {
       runOnJS(stopSound)();
       isDragging.value = true;
 
-      // record starting rotation and reset unwrap accumulators
       dragStartRotation.value = angle.value;
 
       const dx = e.absoluteX - centerX.value;
       const dy = e.absoluteY - centerY.value;
-      const a0 = Math.atan2(dy, dx); // radians
+      const a0 = Math.atan2(dy, dx);
       prevDragAngle.value = a0;
-      cumulativeDragDelta.value = 0; // degrees
+      cumulativeDragDelta.value = 0;
 
       omega.value = 0;
     })
     .onChange((e: any) => {
       const dx = e.absoluteX - centerX.value;
       const dy = e.absoluteY - centerY.value;
-      const a = Math.atan2(dy, dx); // current raw angle (rad)
+      const a = Math.atan2(dy, dx);
 
-      // unwrap: keep diff inside (-PI, PI]
       let diff = a - prevDragAngle.value;
       if (diff > Math.PI) diff -= 2 * Math.PI;
       if (diff <= -Math.PI) diff += 2 * Math.PI;
 
-      // accumulate continuous rotation (in degrees)
       cumulativeDragDelta.value += (diff * 180) / Math.PI;
       prevDragAngle.value = a;
 
-      // set absolute spinner angle from start + accumulated drag
       angle.value = dragStartRotation.value + cumulativeDragDelta.value;
 
-      // Count during drag as well
       const deltaSinceCount = Math.abs(angle.value - lastCountAt.value);
       if (deltaSinceCount >= 360) {
         lastCountAt.value = angle.value;
@@ -213,7 +219,6 @@ export default function SpinnerScreen() {
     .onEnd((e: any) => {
       isDragging.value = false;
 
-      // compute tangential velocity for flick
       const dx = e.absoluteX - centerX.value;
       const dy = e.absoluteY - centerY.value;
       const r = Math.max(Math.hypot(dx, dy), 1);
@@ -292,67 +297,61 @@ export default function SpinnerScreen() {
     </View>
   );
 
-  // ---------- Render ----------
   return (
     <FullscreenWrapper>
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.headerRow}>
-          <BackButton />
-          <Ionicons
-            name="settings-sharp"
-            size={26}
-            color={BRAND.silver}
-            onPress={() => setSettingsVisible(true)}
+      <View style={styles.root}>
+        {/* HEADER (safe-area aware, no magic numbers) */}
+        <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
+          <GameHeader
+            left={<BackButton />}
+            centerLabel="Spins:"
+            centerValue={spinCount}
+            onPressSettings={() => setSettingsVisible(true)}
           />
         </View>
 
-        {/* Centered Counter */}
-        <View pointerEvents="none" style={styles.counterCenter}>
-          <Text style={styles.counterText}>🌀 Spins: {spinCount}</Text>
-        </View>
-
-        {/* Spinner */}
-        <GestureDetector gesture={pan}>
-          <Animated.View
-            ref={bodyRef}
-            onLayout={onBodyLayout}
-            style={[styles.spinnerBody, animatedStyle]}
-          >
-            <LinearGradient
-              colors={["#7c2d12", "#f59e0b", "#7c2d12"]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-              style={[
-                styles.hub,
-                {
-                  width: CONFIG.HUB_DIAMETER,
-                  height: CONFIG.HUB_DIAMETER,
-                  borderRadius: CONFIG.HUB_DIAMETER / 2,
-                  justifyContent: "center",
-                  alignItems: "center",
-                },
-              ]}
+        {/* CONTENT: centered below the header */}
+        <View style={styles.content}>
+          <GestureDetector gesture={pan}>
+            <Animated.View
+              ref={bodyRef}
+              onLayout={onBodyLayout}
+              style={[styles.spinnerBody, animatedStyle]}
             >
               <LinearGradient
-                colors={["#fbbf24", "#d97706", "#78350f"]}
-                start={{ x: 0.3, y: 0.3 }}
+                colors={["#7c2d12", "#f59e0b", "#7c2d12"]}
+                start={{ x: 0, y: 0 }}
                 end={{ x: 1, y: 1 }}
-                style={{
-                  width: CONFIG.HUB_DIAMETER * 0.75,
-                  height: CONFIG.HUB_DIAMETER * 0.75,
-                  borderRadius: (CONFIG.HUB_DIAMETER * 0.75) / 2,
-                }}
-              />
-            </LinearGradient>
+                style={[
+                  styles.hub,
+                  {
+                    width: CONFIG.HUB_DIAMETER,
+                    height: CONFIG.HUB_DIAMETER,
+                    borderRadius: CONFIG.HUB_DIAMETER / 2,
+                    justifyContent: "center",
+                    alignItems: "center",
+                  },
+                ]}
+              >
+                <LinearGradient
+                  colors={["#fbbf24", "#d97706", "#78350f"]}
+                  start={{ x: 0.3, y: 0.3 }}
+                  end={{ x: 1, y: 1 }}
+                  style={{
+                    width: CONFIG.HUB_DIAMETER * 0.75,
+                    height: CONFIG.HUB_DIAMETER * 0.75,
+                    borderRadius: (CONFIG.HUB_DIAMETER * 0.75) / 2,
+                  }}
+                />
+              </LinearGradient>
 
-            <ArmGroup angle="0deg" />
-            <ArmGroup angle="120deg" />
-            <ArmGroup angle="240deg" />
-          </Animated.View>
-        </GestureDetector>
+              <ArmGroup angle="0deg" />
+              <ArmGroup angle="120deg" />
+              <ArmGroup angle="240deg" />
+            </Animated.View>
+          </GestureDetector>
+        </View>
 
-        {/* Settings Modal */}
         <SettingsModal
           visible={settingsVisible}
           onClose={() => setSettingsVisible(false)}
@@ -366,43 +365,33 @@ export default function SpinnerScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: {
+  root: {
+    flex: 1,
+    backgroundColor: "#0b1220",
+  },
+
+  headerWrap: {
+    // Header sits at the top and pushes content naturally (no absolute positioning)
+    paddingHorizontal: 12,
+    paddingBottom: 10,
+    zIndex: 20,
+  },
+
+  content: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#0b1220",
   },
-  headerRow: {
-    position: "absolute",
-    top: 50,
-    left: 16,
-    right: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    zIndex: 10,
-  },
-  counterCenter: {
-    position: "absolute",
-    top: 50,
-    left: 0,
-    right: 0,
-    alignItems: "center",
-    zIndex: 9,
-  },
-  counterText: {
-    color: BRAND.gold,
-    fontSize: 16,
-    fontWeight: "700",
-    textAlign: "center",
-  },
+
   spinnerBody: {
     width: 320,
     height: 320,
     justifyContent: "center",
     alignItems: "center",
   },
+
   hub: { borderWidth: 3, borderColor: "#111", zIndex: 3 },
+
   armGroup: {
     position: "absolute",
     width: "100%",
@@ -410,7 +399,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+
   armBase: { position: "absolute", borderRadius: 999 },
+
   pinch: {
     position: "absolute",
     height: 32,
@@ -418,6 +409,12 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     backgroundColor: "#0b1220",
   },
-  weightRim: { position: "absolute", justifyContent: "center", alignItems: "center" },
+
+  weightRim: {
+    position: "absolute",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
   weightCore: { borderWidth: 3, borderColor: "#111" },
 });

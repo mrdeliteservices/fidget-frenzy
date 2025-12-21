@@ -1,24 +1,16 @@
+// Fidget Frenzy – SettingsModal v0.9-dev unified
+// Expo SDK 54 / RN 0.81
+// Unified across all Frenzy modules (Stress Ball, Slider, Spinner, etc.)
+
 import React from "react";
 import {
-  Modal,
   View,
   Text,
-  StyleSheet,
+  Modal,
   TouchableOpacity,
-  Platform,
+  StyleSheet,
+  Switch,
 } from "react-native";
-import * as Haptics from "expo-haptics";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
-
-// ---------- Universal Base Palette ----------
-const BASE = {
-  steelDark: "#1A2233",
-  steelMid: "#2B364C",
-  steelLight: "#3D4E68",
-  gold: "#FDD017",
-  white: "#FFFFFF",
-};
 
 type Props = {
   visible: boolean;
@@ -26,11 +18,6 @@ type Props = {
   onReset: () => void;
   soundOn: boolean;
   setSoundOn: (v: boolean) => void;
-  blurEnabled?: boolean;
-
-  // ---------- Optional Overrides ----------
-  accentColor?: string;          // replaces gold
-  backgroundTint?: string;       // replaces steelMid
 };
 
 export default function SettingsModal({
@@ -39,94 +26,34 @@ export default function SettingsModal({
   onReset,
   soundOn,
   setSoundOn,
-  blurEnabled = true,
-  accentColor = BASE.gold,
-  backgroundTint = BASE.steelMid,
 }: Props) {
-  const press = async (fn: () => void) => {
-    try {
-      await Haptics.selectionAsync();
-    } catch {}
-    fn();
-  };
-
-  const Content = () => (
-    <View style={styles.wrapper}>
-      {/* ✨ Subtle Ambient Glow */}
-      <LinearGradient
-        colors={[
-          `${accentColor}30`,
-          `${accentColor}10`,
-          "transparent",
-        ]}
-        style={styles.glow}
-      />
-
-      {/* ⚙️ Main Box */}
-      <View
-        style={[
-          styles.modalBox,
-          { backgroundColor: `${backgroundTint}E6`, borderColor: accentColor },
-        ]}
-      >
-        {/* 💫 Top Reflective Line */}
-        <LinearGradient
-          colors={[
-            "rgba(255,255,255,0.1)",
-            `${accentColor}70`,
-            "rgba(255,255,255,0.05)",
-          ]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.topSheen}
-        />
-
-        <Text style={[styles.title, { color: accentColor }]}>⚙️ SETTINGS</Text>
-
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => press(onReset)}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.buttonText, { color: accentColor }]}>
-            🔁 Reset Counter
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => press(() => setSoundOn(!soundOn))}
-          activeOpacity={0.85}
-        >
-          <Text style={[styles.buttonText, { color: accentColor }]}>
-            {soundOn ? "🔊 Sound: On" : "🔇 Sound: Off"}
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, styles.closeButton]}
-          onPress={() => press(onClose)}
-          activeOpacity={0.85}
-        >
-          <Text style={styles.closeText}>❌ Close</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-
   return (
-    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
-      {blurEnabled && Platform.OS !== "android" ? (
-        <BlurView intensity={60} tint="dark" style={StyleSheet.absoluteFill}>
-          <View style={styles.overlay}>
-            <Content />
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+      <View style={styles.overlay}>
+        <View style={styles.modal}>
+          <Text style={styles.title}>Settings</Text>
+
+          <View style={styles.row}>
+            <Text style={styles.label}>Sound</Text>
+            <Switch
+              value={soundOn}
+              onValueChange={setSoundOn}
+              thumbColor={soundOn ? "#FDD017" : "#999"}
+              trackColor={{ true: "#FDD01744", false: "#333" }}
+            />
           </View>
-        </BlurView>
-      ) : (
-        <View style={[StyleSheet.absoluteFill, styles.darkOverlay]}>
-          <Content />
+
+          <View style={styles.buttons}>
+            <TouchableOpacity style={[styles.button, styles.reset]} onPress={onReset}>
+              <Text style={[styles.buttonText, { color: "#FDD017" }]}>Reset</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={[styles.button, styles.close]} onPress={onClose}>
+              <Text style={[styles.buttonText, { color: "#fff" }]}>Close</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      )}
+      </View>
     </Modal>
   );
 }
@@ -134,81 +61,57 @@ export default function SettingsModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 24,
-  },
-  darkOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(10,15,25,0.85)",
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 24,
-  },
-  wrapper: {
+    backgroundColor: "rgba(0,0,0,0.55)",
     alignItems: "center",
     justifyContent: "center",
-    width: "100%",
   },
-  glow: {
-    position: "absolute",
-    width: 340,
-    height: 340,
-    borderRadius: 170,
-    alignSelf: "center",
-    top: "40%",
-  },
-  modalBox: {
-    width: "85%",
-    borderRadius: 22,
-    borderWidth: 1,
+  modal: {
+    width: "80%",
+    backgroundColor: "#0B1E3D",
+    borderRadius: 20,
     padding: 24,
-    shadowColor: BASE.gold,
-    shadowOpacity: 0.35,
-    shadowRadius: 25,
-    shadowOffset: { width: 0, height: 6 },
-    overflow: "hidden",
-  },
-  topSheen: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 3,
-    borderTopLeftRadius: 22,
-    borderTopRightRadius: 22,
+    shadowColor: "#000",
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 6,
   },
   title: {
-    fontSize: 22,
-    fontWeight: "800",
+    color: "#FDD017",
+    fontSize: 26,
+    fontWeight: "700",
     textAlign: "center",
-    marginBottom: 22,
-    letterSpacing: 1.2,
+    marginBottom: 24,
+  },
+  row: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 28,
+  },
+  label: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "500",
+  },
+  buttons: {
+    flexDirection: "row",
+    justifyContent: "space-around",
   },
   button: {
-    backgroundColor: BASE.steelLight,
-    borderRadius: 14,
-    paddingVertical: 12,
+    paddingVertical: 10,
     paddingHorizontal: 20,
-    marginVertical: 6,
-    alignItems: "center",
-    shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 5,
-    shadowOffset: { width: 0, height: 3 },
+    borderRadius: 10,
+  },
+  reset: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#FDD01788",
+  },
+  close: {
+    backgroundColor: "#1C2A4A",
   },
   buttonText: {
-    fontSize: 17,
-    fontWeight: "600",
-    letterSpacing: 0.5,
-  },
-  closeButton: {
-    marginTop: 12,
-    backgroundColor: BASE.steelDark,
-  },
-  closeText: {
-    color: BASE.white,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: "600",
   },
 });
