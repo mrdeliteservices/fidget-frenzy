@@ -49,7 +49,7 @@ const fidgets = [
   {
     id: "1",
     name: "Fidget Spinner",
-    route: "/screens/spinner-screen",
+    route: "/screens/spinner",
     icon: require("../assets/icons/spinner.png"),
     accent: "#4DA3FF", // bright blue
   },
@@ -142,7 +142,7 @@ export default function Home() {
   useEffect(() => {
     (async () => {
       await Promise.allSettled([
-        router.prefetch("/screens/spinner-screen"),
+        router.prefetch("/screens/spinner"),
         router.prefetch("/screens/balloon-popper"),
         router.prefetch("/screens/stress-ball"),
         router.prefetch("/screens/slider-switch"),

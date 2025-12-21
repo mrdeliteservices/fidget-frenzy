@@ -1,5 +1,5 @@
-// app/screens/spinner-screen.tsx
-// Fidget Frenzy – Spinner Screen (v0.8-dev behavior, updated asset name)
+// app/screens/spinner.tsx
+// Fidget Frenzy – Spinner (v0.8-dev behavior, updated asset name)
 // Physics & interaction logic preserved exactly; audio mapped to whoosh-1.mp3
 
 import React, { useEffect, useRef, useState } from "react";
@@ -36,7 +36,7 @@ const CONFIG = {
   OMEGA_STOP: 15,
 };
 
-export default function SpinnerScreen() {
+export default function Spinner() {
   const insets = useSafeAreaInsets();
 
   // motion state
