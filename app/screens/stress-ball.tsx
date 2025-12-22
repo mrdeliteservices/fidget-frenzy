@@ -3,6 +3,9 @@
 // Interactive squish orb with shared SettingsModal + soundManager
 // ✅ Header standardized via GameHeader (Back + "Squeezes:" + Settings)
 // ✅ Header pinned w/ tunable top offset (Spinner-sage Phase 2 fix)
+// ✅ Phase I: PremiumStage + stable “world” teal gradient + stage spacing (Odometer pattern)
+// ✅ Shine OFF for this game (ball shouldn’t sit under a gray cap)
+// ✅ Stage surface forced to Gears top tone gray (no more black)
 
 import React, { useState, useEffect } from "react";
 import { View, StyleSheet, Dimensions, Pressable, SafeAreaView } from "react-native";
@@ -19,14 +22,25 @@ import { LinearGradient } from "expo-linear-gradient";
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
+import PremiumStage from "../../components/PremiumStage";
 import GameHeader from "../../components/GameHeader";
+import { frenzyTheme as t } from "../theme/frenzyTheme";
 import { playSound, preloadSounds } from "../../lib/soundManager";
 
 const { width: W } = Dimensions.get("window");
 const BALL_SIZE = W * 0.4;
 
-// 🔧 TUNING: match Spinner Phase 2 behavior
 const HEADER_TOP = 65;
+
+// ✅ World is stable, teal gradient, non-reactive (lighter → darker)
+const STRESS_WORLD = {
+  top: "#7CF7E6",
+  mid: "#2DD4BF",
+  bottom: "#0B5C59",
+};
+
+// ✅ Stage surface (Gears “top tone” — not-black)
+const STRESS_STAGE_SURFACE = "#36353A";
 
 export default function StressBallScreen() {
   const [soundOn, setSoundOn] = useState(true);
@@ -43,7 +57,6 @@ export default function StressBallScreen() {
       bubble: require("../../assets/sounds/bubble.mp3"),
     });
 
-    // gentle idle pulse animation
     pulse.value = withRepeat(
       withSequence(
         withSpring(1.03, { stiffness: 60, damping: 10 }),
@@ -84,8 +97,14 @@ export default function StressBallScreen() {
     <FullscreenWrapper>
       <View style={styles.root}>
         <SafeAreaView style={styles.safe}>
-          {/* HEADER (pinned, Spinner-sage offset) */}
-          <View style={styles.headerWrap}>
+          <LinearGradient
+            colors={[STRESS_WORLD.top, STRESS_WORLD.mid, STRESS_WORLD.bottom]}
+            start={{ x: 0.3, y: 0 }}
+            end={{ x: 0.7, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+
+          <View style={styles.headerWrap} pointerEvents="box-none">
             <GameHeader
               left={<BackButton />}
               centerLabel="Squeezes:"
@@ -94,18 +113,26 @@ export default function StressBallScreen() {
             />
           </View>
 
-          {/* CONTENT (centered independently) */}
-          <View style={styles.content}>
-            <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut}>
-              <Animated.View style={[styles.ball, animatedStyle]}>
-                <LinearGradient
-                  colors={["#16a34a", "#22c55e", "#166534"]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                  style={styles.gradient}
-                />
-              </Animated.View>
-            </Pressable>
+          <View style={styles.stageWrap}>
+            <View style={styles.stageShell}>
+              <PremiumStage
+                showShine={false}
+                style={{ backgroundColor: STRESS_STAGE_SURFACE }} // ✅ force not-black stage
+              >
+                <View style={styles.content}>
+                  <Pressable onPressIn={handlePressIn} onPressOut={handlePressOut}>
+                    <Animated.View style={[styles.ball, animatedStyle]}>
+                      <LinearGradient
+                        colors={["#16a34a", "#22c55e", "#166534"]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                        style={styles.ballGradient}
+                      />
+                    </Animated.View>
+                  </Pressable>
+                </View>
+              </PremiumStage>
+            </View>
           </View>
 
           <SettingsModal
@@ -122,13 +149,8 @@ export default function StressBallScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: "#081A34",
-  },
-  safe: {
-    flex: 1,
-  },
+  root: { flex: 1 },
+  safe: { flex: 1 },
 
   headerWrap: {
     position: "absolute",
@@ -137,6 +159,19 @@ const styles = StyleSheet.create({
     right: 0,
     paddingHorizontal: 12,
     zIndex: 20,
+  },
+
+  stageWrap: {
+    flex: 1,
+    paddingHorizontal: t.spacing.stageMarginH,
+    paddingTop: t.spacing.stageMarginTop + 72,
+    paddingBottom: t.spacing.stageMarginBottom,
+  },
+
+  stageShell: {
+    flex: 1,
+    borderRadius: 24,
+    overflow: "hidden",
   },
 
   content: {
@@ -156,7 +191,8 @@ const styles = StyleSheet.create({
     shadowRadius: 15,
     shadowOffset: { width: 0, height: 6 },
   },
-  gradient: {
+
+  ballGradient: {
     flex: 1,
     borderRadius: BALL_SIZE / 2,
   },

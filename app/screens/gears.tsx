@@ -8,6 +8,7 @@
 // ✅ Phase 2: Prevent multi-contact (single authority parent per follower)
 // ✅ UI PASS: Stage backlight/glow to fix dark-on-dark visibility (no physics changes)
 // ✅ FIX: Stop winding loop when drag motion pauses (prevents “sound continues” bug)
+// ✅ Stage standardized via PremiumStage (Gears keeps shine ON)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -26,6 +27,7 @@ import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import SettingsModal from "../../components/SettingsModal";
 import GameHeader from "../../components/GameHeader";
+import PremiumStage from "../../components/PremiumStage";
 
 type SoundKey = "winding" | "unwinding";
 type Mode = "idle" | "dragging" | "unwinding";
@@ -115,9 +117,7 @@ export default function Gears() {
         await s.setPositionAsync(0);
         await s.playAsync();
       }
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
   const safeStop = useCallback(async (key: SoundKey) => {
@@ -128,9 +128,7 @@ export default function Gears() {
       await s.stopAsync();
       await s.setIsLoopingAsync(false);
       await s.setPositionAsync(0);
-    } catch {
-      // ignore
-    }
+    } catch {}
   }, []);
 
   // ---- Animation controls ----
@@ -200,9 +198,7 @@ export default function Gears() {
           const { winding, unwinding } = soundsRef.current;
           if (winding) await winding.unloadAsync();
           if (unwinding) await unwinding.unloadAsync();
-        } catch {
-          // ignore
-        } finally {
+        } catch {} finally {
           soundsRef.current.winding = null;
           soundsRef.current.unwinding = null;
         }
@@ -369,7 +365,6 @@ export default function Gears() {
       touchRef.current.moved = false;
       touchRef.current.longPressFired = false;
 
-      // clear any prior idle timer
       if (touchRef.current.idleStopTimer) {
         clearTimeout(touchRef.current.idleStopTimer);
         touchRef.current.idleStopTimer = null;
@@ -398,7 +393,6 @@ export default function Gears() {
         if (touchRef.current.moved) return;
         touchRef.current.longPressFired = true;
 
-        // long press is “reverse” only — ensure no loop is playing
         void safeStop("winding");
         void safeStop("unwinding");
 
@@ -445,13 +439,10 @@ export default function Gears() {
 
       if (touchRef.current.longPressFired) return;
 
-      // ✅ movement happened — ensure winding is running (in case we idled it off)
       void safeStartLoop("winding");
 
-      // ✅ reset “idle stop” timer so if finger stops moving, winding stops
       if (touchRef.current.idleStopTimer) clearTimeout(touchRef.current.idleStopTimer);
       touchRef.current.idleStopTimer = setTimeout(() => {
-        // only stop if still dragging and still touching
         if (!touchRef.current.active) return;
         if (modeRef.current !== "dragging") return;
         if (touchRef.current.longPressFired) return;
@@ -498,14 +489,12 @@ export default function Gears() {
     }
 
     if (touchRef.current.longPressFired) {
-      // long-press was a “reverse” action only — ensure silence
       void safeStop("winding");
       void safeStop("unwinding");
       setModeNow("idle");
       return;
     }
 
-    // If we never crossed move threshold, still stop any accidental loop and bail
     if (!touchRef.current.moved) {
       void safeStop("winding");
       void safeStop("unwinding");
@@ -687,78 +676,86 @@ export default function Gears() {
           </View>
 
           {/* STAGE */}
-          <View
-            style={styles.stage}
-            onLayout={(e) => {
-              const { width, height } = e.nativeEvent.layout;
-              setStageSize({ w: width, h: height });
-            }}
-          >
-            {/* Stage backlight / glow (visual only) */}
-            <LinearGradient
-              pointerEvents="none"
-              colors={["rgba(255,255,255,0.10)", "rgba(255,255,255,0.00)"]}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            <View pointerEvents="none" style={styles.stageGlow} />
+          <View style={styles.stageWrap}>
+            <PremiumStage
+              showShine={false} // ✅ KILLS the top gray cap
+              style={{ backgroundColor: "#161824" }} // keep your Gears stage tone
+            >
+              <View
+                style={styles.stageInner}
+                onLayout={(e) => {
+                  const { width, height } = e.nativeEvent.layout;
+                  setStageSize({ w: width, h: height });
+                }}
+              >
+                {/* Stage backlight / glow (visual only) */}
+                <LinearGradient
+                  pointerEvents="none"
+                  colors={["rgba(255,255,255,0.10)", "rgba(255,255,255,0.00)"]}
+                  start={{ x: 0.5, y: 0 }}
+                  end={{ x: 0.5, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                />
+                <View pointerEvents="none" style={styles.stageGlow} />
 
-            {/* Followers (network) */}
-            {placed.map((g) => {
-              const rotate = rotateForMultiplier(g.mult);
-              return (
-                <Animated.Image
-                  key={g.id}
-                  source={g.source}
-                  resizeMode="contain"
+                {/* Followers (network) */}
+                {placed.map((g) => {
+                  const rotate = rotateForMultiplier(g.mult);
+                  return (
+                    <Animated.Image
+                      key={g.id}
+                      source={g.source}
+                      resizeMode="contain"
+                      style={[
+                        styles.img,
+                        {
+                          width: g.size,
+                          height: g.size,
+                          left: g.left,
+                          top: g.top,
+                          transform: [{ rotate }],
+                        },
+                      ]}
+                    />
+                  );
+                })}
+
+                {/* DRIVER */}
+                <View
                   style={[
                     styles.img,
                     {
-                      width: g.size,
-                      height: g.size,
-                      left: g.left,
-                      top: g.top,
-                      transform: [{ rotate }],
+                      width: DRIVER_SIZE,
+                      height: DRIVER_SIZE,
+                      left: driverCenterX - DRIVER_SIZE / 2,
+                      top: driverCenterY - DRIVER_SIZE / 2,
                     },
                   ]}
-                />
-              );
-            })}
-
-            {/* DRIVER (touch wrapper does NOT rotate) */}
-            <View
-              style={[
-                styles.img,
-                {
-                  width: DRIVER_SIZE,
-                  height: DRIVER_SIZE,
-                  left: driverCenterX - DRIVER_SIZE / 2,
-                  top: driverCenterY - DRIVER_SIZE / 2,
-                },
-              ]}
-              onStartShouldSetResponder={() => true}
-              onMoveShouldSetResponder={() => true}
-              onResponderGrant={onGoldGrant}
-              onResponderMove={onGoldMove}
-              onResponderRelease={onGoldRelease}
-              onResponderTerminate={onGoldRelease}
-            >
-              <Animated.View
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  transform: [{ rotate: rotateDriver }],
-                }}
-              >
-                <Animated.Image
-                  source={DRIVER_SOURCE}
-                  resizeMode="contain"
-                  style={{ width: "100%", height: "100%" }}
-                />
-              </Animated.View>
-            </View>
+                  onStartShouldSetResponder={() => true}
+                  onMoveShouldSetResponder={() => true}
+                  onResponderGrant={onGoldGrant}
+                  onResponderMove={onGoldMove}
+                  onResponderRelease={onGoldRelease}
+                  onResponderTerminate={onGoldRelease}
+                >
+                  <Animated.View
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      transform: [{ rotate: rotateDriver }],
+                    }}
+                  >
+                    <Animated.Image
+                      source={DRIVER_SOURCE}
+                      resizeMode="contain"
+                      style={{ width: "100%", height: "100%" }}
+                    />
+                  </Animated.View>
+                </View>
+              </View>
+            </PremiumStage>
           </View>
+
 
           {/* Settings modal */}
           <SettingsModal
@@ -782,14 +779,19 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
 
-  stage: {
+  // matches your other staged games’ outer spacing pattern
+  stageWrap: {
     flex: 1,
-    borderRadius: 16,
-    backgroundColor: "#161824",
-    overflow: "hidden",
     marginHorizontal: 12,
     marginTop: 10,
     marginBottom: 12,
+    borderRadius: 16,
+    overflow: "hidden",
+  },
+
+  // inner stage surface (keeps your previous sizing behavior)
+  stageInner: {
+    flex: 1,
   },
 
   stageGlow: {

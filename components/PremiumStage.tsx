@@ -6,13 +6,16 @@ import { frenzyTheme as t } from "../app/theme/frenzyTheme";
 type Props = {
   style?: ViewStyle;
   children: React.ReactNode;
+
+  // ✅ NEW: allow games to disable the top "shine" band
+  showShine?: boolean;
 };
 
-export default function PremiumStage({ style, children }: Props) {
+export default function PremiumStage({ style, children, showShine = true }: Props) {
   return (
     <View style={[styles.wrap, style]}>
-      {/* subtle “shine” */}
-      <View pointerEvents="none" style={styles.shine} />
+      {/* subtle “shine” (optional) */}
+      {showShine ? <View pointerEvents="none" style={styles.shine} /> : null}
       {children}
     </View>
   );

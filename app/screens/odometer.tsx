@@ -3,7 +3,9 @@
 // ✅ Replace PremiumHeader with canonical GameHeader Standard
 // ✅ Replace warm cream world background with nostalgia orange/yellow gradient
 // ✅ Preserve all physics/audio/gesture logic (unchanged)
-// NOTE: No refactors/cleanup beyond UI wrapper swap + background palette change.
+// ✅ Stage cap removal uses PremiumStage showShine={false} (no overpaint hack)
+// ✅ Stage surface set to solid Gears-top gray so tire doesn’t get swallowed
+// NOTE: No refactors/cleanup beyond UI layer adjustments.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -81,6 +83,9 @@ const ODO_WORLD = {
   mid: "#FFB547", // orange sherbet
   bottom: "#FF7A1A", // punchy orange
 };
+
+// ✅ Standard stage surface (sampled from Gears top tone)
+const ODO_STAGE_SURFACE = "#36353A";
 
 // ------------------------------------------------------
 //  PHYSICS + AUDIO CONFIG
@@ -585,60 +590,62 @@ export default function OdometerScreen() {
 
           {/* Stage */}
           <View style={styles.stageWrap}>
-            <PremiumStage>
-              <View style={styles.content} pointerEvents="box-none">
-                <View
-                  style={styles.trackWrapper}
-                  onLayout={onTrackLayout}
-                  pointerEvents="none"
-                >
-                  <Image
-                    source={TRACK_SRC}
-                    style={styles.trackImage}
-                    resizeMode="contain"
-                  />
-                  <AnimatedImage
-                    source={CAR_SRC}
-                    style={[styles.carBase, carStyle]}
-                    resizeMode="contain"
-                  />
-                </View>
-
-                <View style={styles.tireWrapper}>
-                  <GestureDetector gesture={combinedGesture}>
-                    <AnimatedImage
-                      source={TIRE_SRC}
-                      style={[styles.tireImage, tireStyle]}
+            <View style={styles.stageShell}>
+              <PremiumStage showShine={false} style={styles.stageSurface}>
+                <View style={styles.content} pointerEvents="box-none">
+                  <View
+                    style={styles.trackWrapper}
+                    onLayout={onTrackLayout}
+                    pointerEvents="none"
+                  >
+                    <Image
+                      source={TRACK_SRC}
+                      style={styles.trackImage}
                       resizeMode="contain"
                     />
-                  </GestureDetector>
+                    <AnimatedImage
+                      source={CAR_SRC}
+                      style={[styles.carBase, carStyle]}
+                      resizeMode="contain"
+                    />
+                  </View>
+
+                  <View style={styles.tireWrapper}>
+                    <GestureDetector gesture={combinedGesture}>
+                      <AnimatedImage
+                        source={TIRE_SRC}
+                        style={[styles.tireImage, tireStyle]}
+                        resizeMode="contain"
+                      />
+                    </GestureDetector>
+                  </View>
                 </View>
-              </View>
 
-              <SettingsModal
-                visible={settingsVisible}
-                onClose={() => setSettingsVisible(false)}
-                onReset={() => {
-                  tireAngle.value = 0;
-                  tireOmega.value = 0;
-                  lapProgress.value = 0;
-                  totalMiles.value = 0;
-                  lastMileageInt.value = 0;
-                  speedFactor.value = 0;
+                <SettingsModal
+                  visible={settingsVisible}
+                  onClose={() => setSettingsVisible(false)}
+                  onReset={() => {
+                    tireAngle.value = 0;
+                    tireOmega.value = 0;
+                    lapProgress.value = 0;
+                    totalMiles.value = 0;
+                    lastMileageInt.value = 0;
+                    speedFactor.value = 0;
 
-                  isBraking.value = false;
-                  carSpeed.value = 0;
-                  carDirection.value = 1;
-                  brakeStartSpeed.value = 0;
-                  brakeElapsed.value = 0;
+                    isBraking.value = false;
+                    carSpeed.value = 0;
+                    carDirection.value = 1;
+                    brakeStartSpeed.value = 0;
+                    brakeElapsed.value = 0;
 
-                  setMileage(0);
-                  stopEngineInstant();
-                }}
-                soundOn={soundOn}
-                setSoundOn={setSoundOn}
-              />
-            </PremiumStage>
+                    setMileage(0);
+                    stopEngineInstant();
+                  }}
+                  soundOn={soundOn}
+                  setSoundOn={setSoundOn}
+                />
+              </PremiumStage>
+            </View>
           </View>
         </SafeAreaView>
       </View>
@@ -653,7 +660,6 @@ const styles = StyleSheet.create({
   root: { flex: 1 },
   safe: { flex: 1 },
 
-  // Canonical header anchor (matches Spinner/Balloon)
   headerWrap: {
     position: "absolute",
     top: 65,
@@ -665,9 +671,19 @@ const styles = StyleSheet.create({
   stageWrap: {
     flex: 1,
     paddingHorizontal: t.spacing.stageMarginH,
-    // give stage breathing room so it doesn't hide under the header
     paddingTop: t.spacing.stageMarginTop + 72,
     paddingBottom: t.spacing.stageMarginBottom,
+  },
+
+  stageShell: {
+    flex: 1,
+    borderRadius: 24,
+    overflow: "hidden",
+  },
+
+  // ✅ Solid stage surface so tire pops
+  stageSurface: {
+    backgroundColor: ODO_STAGE_SURFACE,
   },
 
   content: {
