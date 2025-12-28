@@ -5,6 +5,15 @@
 // ✅ Explosion sound cycles balloon-pop-1..6 in order (non-random)
 // ✅ Palette swap delayed after cool flash (intentional, not “blue glitch”)
 // ✅ Crash-safe explosion gating
+// ✅ Phase III: Drag (Explore)
+//    - HARD clamp translation (ball never goes out of frame)
+//    - Axis-correct bounds (use stage width AND height; vertical is no longer restricted by width)
+//    - Soft “wall tension” via added deformation when pushing into edge
+//    - Spring return on release
+//
+// IMPORTANT (crash prevention):
+// - NO non-worklet JS helpers used inside useAnimatedStyle().
+// - Any clamp/math inside worklets is done inline.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Dimensions, SafeAreaView } from "react-native";
@@ -51,6 +60,7 @@ const TAP_SQUISH = 0.86;
 const HOLD_RAMP_MS = 1400;
 const LONG_PRESS_MIN_MS = 220;
 
+// Pressure containment margin (inflate must stay within this)
 const PRESSURE_MARGIN = 0.90;
 const PRESSURE_INFLATE_MIN = 1.02;
 const PRESSURE_DEFORM_X_MAX = 1.14;
@@ -60,32 +70,49 @@ const EXPLOSION_KICK = 1.22;
 const IDLE_PULSE_ON = true;
 
 // ---------------------------
+// Drag tuning (Explore)
+// ---------------------------
+const DRAG_MIN_DISTANCE = 10; // tap still wins when you barely move
+
+// Drag containment margin (closer to edges than pressure)
+const DRAG_MARGIN = 0.96;
+
+const DRAG_MAX_STRETCH = 0.14; // base tug stretch (+%)
+const DRAG_MAX_SQUASH = 0.09;  // base tug squash (-%)
+const DRAG_SPRING = { stiffness: 260, damping: 20 }; // snappy but controlled
+
+// Wall tension additions (when pushing into the edge)
+// This is visual resistance (deformation) while translation stays clamped.
+const WALL_TENSION_STRETCH_ADD = 0.04;
+const WALL_TENSION_SQUASH_ADD = 0.03;
+
+// ---------------------------
 // Mood Drift palettes (resting state)
 // ---------------------------
 const BALL_PALETTES: [string, string, string][] = [
-  ["#16a34a", "#22c55e", "#166534"], // green
-  ["#0ea5e9", "#38bdf8", "#0b3b5a"], // ocean
-  ["#a78bfa", "#c4b5fd", "#3b0764"], // violet
-  ["#f472b6", "#fb7185", "#701a75"], // pink glow
-  ["#f59e0b", "#fbbf24", "#7c2d12"], // amber
-  ["#22c55e", "#a3e635", "#14532d"], // lime
-  ["#60a5fa", "#93c5fd", "#1e3a8a"], // sky
-  ["#34d399", "#2dd4bf", "#064e3b"], // mint/teal
-  ["#f97316", "#fb7185", "#7f1d1d"], // warm sunset
-  ["#e879f9", "#c084fc", "#312e81"], // neon lavender
+  ["#16a34a", "#22c55e", "#166534"],
+  ["#0ea5e9", "#38bdf8", "#0b3b5a"],
+  ["#a78bfa", "#c4b5fd", "#3b0764"],
+  ["#f472b6", "#fb7185", "#701a75"],
+  ["#f59e0b", "#fbbf24", "#7c2d12"],
+  ["#22c55e", "#a3e635", "#14532d"],
+  ["#60a5fa", "#93c5fd", "#1e3a8a"],
+  ["#34d399", "#2dd4bf", "#064e3b"],
+  ["#f97316", "#fb7185", "#7f1d1d"],
+  ["#e879f9", "#c084fc", "#312e81"],
 ];
 
 const BALL_HEAT_PALETTES: [string, string, string][] = [
-  ["#4ade80", "#22c55e", "#052e16"], // green heats
-  ["#22d3ee", "#38bdf8", "#082f49"], // ocean heats
-  ["#e879f9", "#c084fc", "#3b0764"], // violet heats
-  ["#fb7185", "#f472b6", "#500724"], // pink heats
-  ["#fbbf24", "#f59e0b", "#451a03"], // amber heats
-  ["#bef264", "#a3e635", "#14532d"], // lime heats
-  ["#93c5fd", "#60a5fa", "#1e3a8a"], // sky heats
-  ["#5eead4", "#2dd4bf", "#064e3b"], // mint heats
-  ["#fb7185", "#f97316", "#7f1d1d"], // sunset heats
-  ["#f0abfc", "#e879f9", "#312e81"], // lavender heats
+  ["#4ade80", "#22c55e", "#052e16"],
+  ["#22d3ee", "#38bdf8", "#082f49"],
+  ["#e879f9", "#c084fc", "#3b0764"],
+  ["#fb7185", "#f472b6", "#500724"],
+  ["#fbbf24", "#f59e0b", "#451a03"],
+  ["#bef264", "#a3e635", "#14532d"],
+  ["#93c5fd", "#60a5fa", "#1e3a8a"],
+  ["#5eead4", "#2dd4bf", "#064e3b"],
+  ["#fb7185", "#f97316", "#7f1d1d"],
+  ["#f0abfc", "#e879f9", "#312e81"],
 ];
 
 // Cool flash overlay on explosion (release) — subtle
@@ -110,7 +137,7 @@ const BALLOON_POP_KEYS = [
   "balloon-pop-6",
 ] as const;
 
-// Utility: shuffle array (Fisher–Yates)
+// Utility: shuffle array (Fisher–Yates) — JS only (safe)
 const shuffle = <T,>(arr: T[]) => {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -127,11 +154,14 @@ export default function StressBallScreen() {
 
   const [paletteIndex, setPaletteIndex] = useState(0);
 
+  // Shuffle bag for palette drift
   const bagRef = useRef<number[]>([]);
   const lastPaletteRef = useRef<number>(0);
 
+  // Explosion pop sequence index
   const popSeqRef = useRef(0);
 
+  // Delay timer for palette swap after explosion flash
   const paletteSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const nextPaletteIndex = () => {
@@ -146,7 +176,9 @@ export default function StressBallScreen() {
     return idx;
   };
 
-  const [stageMinDim, setStageMinDim] = useState<number>(0);
+  // Stage size for containment (AXIS-SPECIFIC)
+  const [stageW, setStageW] = useState<number>(0);
+  const [stageH, setStageH] = useState<number>(0);
 
   // Reanimated
   const scale = useSharedValue(1);
@@ -156,9 +188,17 @@ export default function StressBallScreen() {
   const pressureStep = useSharedValue(0);
   const explosionTrigger = useSharedValue(0);
 
+  // Drag (Explore)
+  const dragX = useSharedValue(0);
+  const dragY = useSharedValue(0);
+
+  // Shared pressuring flag (UI thread)
+  const isPressuringSV = useSharedValue(0);
+
   // JS guards
   const isPressuringRef = useRef(false);
   const didExplodeRef = useRef(false);
+  const didDragHapticRef = useRef(false);
 
   useEffect(() => {
     preloadSounds({
@@ -174,6 +214,7 @@ export default function StressBallScreen() {
       "balloon-pop-6": BALLOON_POP_FILES[5],
     });
 
+    // seed bag
     lastPaletteRef.current = 0;
     bagRef.current = shuffle(
       Array.from({ length: BALL_PALETTES.length }, (_, i) => i).filter((i) => i !== 0)
@@ -203,6 +244,11 @@ export default function StressBallScreen() {
     scale.value = withSpring(1.08, { stiffness: 160, damping: 12 }, () => {
       scale.value = withSpring(1, { stiffness: 140, damping: 14 });
     });
+  };
+
+  const resetDrag = () => {
+    dragX.value = withSpring(0, DRAG_SPRING);
+    dragY.value = withSpring(0, DRAG_SPRING);
   };
 
   const onTap = async () => {
@@ -259,6 +305,7 @@ export default function StressBallScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     } catch {}
 
+    // palette swap AFTER cool flash
     if (paletteSwapTimerRef.current) clearTimeout(paletteSwapTimerRef.current);
     paletteSwapTimerRef.current = setTimeout(() => {
       setPaletteIndex(nextPaletteIndex());
@@ -266,6 +313,9 @@ export default function StressBallScreen() {
     }, 280);
 
     isPressuringRef.current = false;
+    isPressuringSV.value = 0;
+
+    resetDrag();
 
     setTimeout(() => {
       didExplodeRef.current = false;
@@ -274,8 +324,11 @@ export default function StressBallScreen() {
 
   const onPressureStart = async () => {
     isPressuringRef.current = true;
+    isPressuringSV.value = 1;
     didExplodeRef.current = false;
     pressureStep.value = 0;
+
+    resetDrag();
 
     scale.value = withSpring(0.99, { stiffness: 140, damping: 16 });
     pressure.value = 0;
@@ -308,6 +361,7 @@ export default function StressBallScreen() {
   const onPressureRelease = async () => {
     if (didExplodeRef.current) {
       isPressuringRef.current = false;
+      isPressuringSV.value = 0;
       return;
     }
 
@@ -324,7 +378,21 @@ export default function StressBallScreen() {
 
     setTimeout(() => {
       isPressuringRef.current = false;
+      isPressuringSV.value = 0;
     }, 60);
+  };
+
+  const onDragBeginJS = async () => {
+    if (isPressuringRef.current) return;
+    if (didDragHapticRef.current) return;
+    didDragHapticRef.current = true;
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
+  };
+
+  const onDragFinalizeJS = () => {
+    didDragHapticRef.current = false;
   };
 
   const reset = () => setPressCount(0);
@@ -353,24 +421,84 @@ export default function StressBallScreen() {
     }
   );
 
+  // ---------------------------
+  // Animated styles (WORKLET-SAFE)
+  // ---------------------------
   const ballStyle = useAnimatedStyle(() => {
-    const minDim = stageMinDim > 0 ? stageMinDim : BALL_SIZE * 1.9;
-    const containedDim = minDim * PRESSURE_MARGIN;
-    const maxContainedScale = containedDim / BALL_SIZE;
+    // stage dimensions fallbacks
+    const w = stageW > 0 ? stageW : BALL_SIZE * 1.9;
+    const h = stageH > 0 ? stageH : BALL_SIZE * 2.4;
+
+    // pressure containment (stricter)
+    const containedWPressure = w * PRESSURE_MARGIN;
+    const containedHPressure = h * PRESSURE_MARGIN;
+
+    // drag containment (looser, closer to wall)
+    const containedWDrag = w * DRAG_MARGIN;
+    const containedHDrag = h * DRAG_MARGIN;
+
+    const maxTx = Math.max(0, (containedWDrag - BALL_SIZE) / 2);
+    const maxTy = Math.max(0, (containedHDrag - BALL_SIZE) / 2);
+
+    const rawX = dragX.value;
+    const rawY = dragY.value;
+
+    // HARD clamp translation (axis-specific)
+    const tx = Math.max(-maxTx, Math.min(maxTx, rawX));
+    const ty = Math.max(-maxTy, Math.min(maxTy, rawY));
+
+    // Overdrag (pushing into edge) — axis-specific
+    const overX = Math.max(0, Math.abs(rawX) - maxTx);
+    const overY = Math.max(0, Math.abs(rawY) - maxTy);
+    const over = overX + overY;
+
+    // Normalize wall tension 0..1
+    const base = Math.max(1, (maxTx + maxTy) * 0.5);
+    const tension = Math.min(1, over / (base * 0.75));
+
+    // Pressure scaling must remain contained in BOTH axes
+    const maxScaleX = containedWPressure / BALL_SIZE;
+    const maxScaleY = containedHPressure / BALL_SIZE;
+    const maxContainedScale = Math.max(1, Math.min(maxScaleX, maxScaleY));
 
     const inflate =
       PRESSURE_INFLATE_MIN + (maxContainedScale - PRESSURE_INFLATE_MIN) * pressure.value;
 
-    const deformX = 1 + (PRESSURE_DEFORM_X_MAX - 1) * pressure.value;
-    const deformY = 1 + (PRESSURE_DEFORM_Y_MIN - 1) * pressure.value;
+    const deformXPressure = 1 + (PRESSURE_DEFORM_X_MAX - 1) * pressure.value;
+    const deformYPressure = 1 + (PRESSURE_DEFORM_Y_MIN - 1) * pressure.value;
+
+    const pressuring = isPressuringSV.value > 0.5;
+
+    // Normalize distance 0..1 against axis bounds (feels correct in tall stages)
+    const nx = maxTx > 0 ? Math.min(1, Math.abs(tx) / maxTx) : 0;
+    const ny = maxTy > 0 ? Math.min(1, Math.abs(ty) / maxTy) : 0;
+    const d = Math.min(1, Math.max(nx, ny));
+
+    const stretchAmt = DRAG_MAX_STRETCH + WALL_TENSION_STRETCH_ADD * tension;
+    const squashAmt = DRAG_MAX_SQUASH + WALL_TENSION_SQUASH_ADD * tension;
+
+    const dragStretch = 1 + stretchAmt * d;
+    const dragSquash = 1 - squashAmt * d;
+
+    // Tug orientation
+    const ax = Math.abs(tx);
+    const ay = Math.abs(ty);
+    const denom = ax + ay + 0.0001;
+    const biasX = ax / denom;
+    const biasY = 1 - biasX;
+
+    const dragScaleX = 1 + (dragStretch - 1) * biasX + (dragSquash - 1) * biasY;
+    const dragScaleY = 1 + (dragStretch - 1) * biasY + (dragSquash - 1) * biasX;
 
     const explodeKick = 1 + (EXPLOSION_KICK - 1) * explosion.value;
 
     return {
       transform: [
+        { translateX: pressuring ? 0 : tx },
+        { translateY: pressuring ? 0 : ty },
         { scale: scale.value * pulse.value * inflate * explodeKick },
-        { scaleX: deformX },
-        { scaleY: deformY },
+        { scaleX: deformXPressure * (pressuring ? 1 : dragScaleX) },
+        { scaleY: deformYPressure * (pressuring ? 1 : dragScaleY) },
       ],
     };
   });
@@ -386,6 +514,9 @@ export default function StressBallScreen() {
     return { opacity: o };
   });
 
+  // ---------------------------
+  // Gestures
+  // ---------------------------
   const tapGesture = Gesture.Tap()
     .maxDuration(250)
     .onEnd((_, success) => {
@@ -399,7 +530,31 @@ export default function StressBallScreen() {
     .onStart(() => runOnJS(onPressureStart)())
     .onEnd(() => runOnJS(onPressureRelease)());
 
-  const gesture = Gesture.Exclusive(longPressGesture, tapGesture);
+  const panGesture = Gesture.Pan()
+    .minDistance(DRAG_MIN_DISTANCE)
+    .onBegin(() => {
+      if (isPressuringSV.value > 0.5) return;
+      runOnJS(onDragBeginJS)();
+    })
+    .onUpdate((e) => {
+      if (isPressuringSV.value > 0.5) return;
+      dragX.value = e.translationX;
+      dragY.value = e.translationY;
+    })
+    .onEnd(() => {
+      if (isPressuringSV.value > 0.5) return;
+      dragX.value = withSpring(0, DRAG_SPRING);
+      dragY.value = withSpring(0, DRAG_SPRING);
+    })
+    .onFinalize(() => {
+      if (isPressuringSV.value > 0.5) return;
+      dragX.value = withSpring(0, DRAG_SPRING);
+      dragY.value = withSpring(0, DRAG_SPRING);
+      runOnJS(onDragFinalizeJS)();
+    });
+
+  const pressGesture = Gesture.Exclusive(longPressGesture, tapGesture);
+  const gesture = Gesture.Simultaneous(panGesture, pressGesture);
 
   const [c1, c2, c3] = BALL_PALETTES[paletteIndex] ?? BALL_PALETTES[0];
   const [h1, h2, h3] = BALL_HEAT_PALETTES[paletteIndex] ?? BALL_HEAT_PALETTES[0];
@@ -431,10 +586,8 @@ export default function StressBallScreen() {
                   style={styles.content}
                   onLayout={(e) => {
                     const { width, height } = e.nativeEvent.layout;
-                    const minDim = Math.min(width, height);
-                    if (minDim > 0 && Math.abs(minDim - stageMinDim) > 2) {
-                      setStageMinDim(minDim);
-                    }
+                    if (width > 0 && Math.abs(width - stageW) > 2) setStageW(width);
+                    if (height > 0 && Math.abs(height - stageH) > 2) setStageH(height);
                   }}
                 >
                   <GestureDetector gesture={gesture}>
@@ -475,7 +628,7 @@ export default function StressBallScreen() {
           <SettingsModal
             visible={settingsVisible}
             onClose={() => setSettingsVisible(false)}
-            onReset={reset}
+            onReset={() => setPressCount(0)}
             soundOn={soundOn}
             setSoundOn={setSoundOn}
           />
