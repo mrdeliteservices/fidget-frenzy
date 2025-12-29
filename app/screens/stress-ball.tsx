@@ -6,14 +6,14 @@
 // ✅ Palette swap delayed after cool flash (intentional, not “blue glitch”)
 // ✅ Crash-safe explosion gating
 // ✅ Phase III: Drag (Explore)
+//    - Axis-correct bounds (width & height)
 //    - HARD clamp translation (ball never goes out of frame)
-//    - Axis-correct bounds (use stage width AND height; vertical is no longer restricted by width)
-//    - Soft “wall tension” via added deformation when pushing into edge
+//    - Wall resistance via deformation (tension) when pushing into edge
+//    - SAFE_EDGE_PAD removes tiny pixel clipping caused by pulse/stretch/overshoot
 //    - Spring return on release
 //
-// IMPORTANT (crash prevention):
-// - NO non-worklet JS helpers used inside useAnimatedStyle().
-// - Any clamp/math inside worklets is done inline.
+// IMPORTANT:
+// - No JS helpers inside useAnimatedStyle; all math is worklet-safe.
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Dimensions, SafeAreaView } from "react-native";
@@ -72,17 +72,24 @@ const IDLE_PULSE_ON = true;
 // ---------------------------
 // Drag tuning (Explore)
 // ---------------------------
-const DRAG_MIN_DISTANCE = 10; // tap still wins when you barely move
+const DRAG_MIN_DISTANCE = 10;
+
+// ✅ Real-drag threshold for counting a "squeeze" on drag release
+// If translation distance exceeds this at any point during the drag, release increments Squeezes by +1
+const DRAG_SQUEEZE_THRESHOLD = 8; // px (tune 6–12)
 
 // Drag containment margin (closer to edges than pressure)
-const DRAG_MARGIN = 0.96;
+// 0.98 means we allow movement within 98% of the stage dimension
+const DRAG_MARGIN = 0.98;
 
-const DRAG_MAX_STRETCH = 0.14; // base tug stretch (+%)
-const DRAG_MAX_SQUASH = 0.09;  // base tug squash (-%)
-const DRAG_SPRING = { stiffness: 260, damping: 20 }; // snappy but controlled
+// Safety pad to prevent tiny pixel clipping (pulse/stretch/spring overshoot)
+const SAFE_EDGE_PAD = 2; // px (tune 6–12)
+
+const DRAG_MAX_STRETCH = 0.14;
+const DRAG_MAX_SQUASH = 0.09;
+const DRAG_SPRING = { stiffness: 260, damping: 20 };
 
 // Wall tension additions (when pushing into the edge)
-// This is visual resistance (deformation) while translation stays clamped.
 const WALL_TENSION_STRETCH_ADD = 0.04;
 const WALL_TENSION_SQUASH_ADD = 0.03;
 
@@ -115,7 +122,6 @@ const BALL_HEAT_PALETTES: [string, string, string][] = [
   ["#f0abfc", "#e879f9", "#312e81"],
 ];
 
-// Cool flash overlay on explosion (release) — subtle
 const COOL_OVERLAY: [string, string, string] = ["#22d3ee", "#38bdf8", "#0ea5e9"];
 
 // Balloon pop sequence (explosion only): 1 → 6 → 1 → ...
@@ -137,7 +143,7 @@ const BALLOON_POP_KEYS = [
   "balloon-pop-6",
 ] as const;
 
-// Utility: shuffle array (Fisher–Yates) — JS only (safe)
+// Utility: shuffle array (Fisher–Yates) — JS only
 const shuffle = <T,>(arr: T[]) => {
   const a = [...arr];
   for (let i = a.length - 1; i > 0; i--) {
@@ -153,6 +159,9 @@ export default function StressBallScreen() {
   const [pressCount, setPressCount] = useState(0);
 
   const [paletteIndex, setPaletteIndex] = useState(0);
+
+  // ✅ helper for UI-thread -> JS increments
+  const incPressCount = () => setPressCount((p) => p + 1);
 
   // Shuffle bag for palette drift
   const bagRef = useRef<number[]>([]);
@@ -191,6 +200,9 @@ export default function StressBallScreen() {
   // Drag (Explore)
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
+
+  // ✅ Track whether the current drag should count as a squeeze
+  const dragCountsSV = useSharedValue(false);
 
   // Shared pressuring flag (UI thread)
   const isPressuringSV = useSharedValue(0);
@@ -305,7 +317,6 @@ export default function StressBallScreen() {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     } catch {}
 
-    // palette swap AFTER cool flash
     if (paletteSwapTimerRef.current) clearTimeout(paletteSwapTimerRef.current);
     paletteSwapTimerRef.current = setTimeout(() => {
       setPaletteIndex(nextPaletteIndex());
@@ -425,7 +436,6 @@ export default function StressBallScreen() {
   // Animated styles (WORKLET-SAFE)
   // ---------------------------
   const ballStyle = useAnimatedStyle(() => {
-    // stage dimensions fallbacks
     const w = stageW > 0 ? stageW : BALL_SIZE * 1.9;
     const h = stageH > 0 ? stageH : BALL_SIZE * 2.4;
 
@@ -433,12 +443,17 @@ export default function StressBallScreen() {
     const containedWPressure = w * PRESSURE_MARGIN;
     const containedHPressure = h * PRESSURE_MARGIN;
 
-    // drag containment (looser, closer to wall)
+    // drag containment (looser)
     const containedWDrag = w * DRAG_MARGIN;
     const containedHDrag = h * DRAG_MARGIN;
 
-    const maxTx = Math.max(0, (containedWDrag - BALL_SIZE) / 2);
-    const maxTy = Math.max(0, (containedHDrag - BALL_SIZE) / 2);
+    // worst-case visual stretch (drag stretch + wall tension)
+    const MAX_DRAG_STRETCH = 1 + DRAG_MAX_STRETCH + WALL_TENSION_STRETCH_ADD;
+    const SAFE_BALL = BALL_SIZE * MAX_DRAG_STRETCH;
+
+    // axis-specific translation bounds (subtract pad to eliminate tiny clipping)
+    const maxTx = Math.max(0, (containedWDrag - SAFE_BALL) / 2 - SAFE_EDGE_PAD);
+    const maxTy = Math.max(0, (containedHDrag - SAFE_BALL) / 2 - SAFE_EDGE_PAD);
 
     const rawX = dragX.value;
     const rawY = dragY.value;
@@ -447,7 +462,7 @@ export default function StressBallScreen() {
     const tx = Math.max(-maxTx, Math.min(maxTx, rawX));
     const ty = Math.max(-maxTy, Math.min(maxTy, rawY));
 
-    // Overdrag (pushing into edge) — axis-specific
+    // Overdrag — how hard user is pushing into edge
     const overX = Math.max(0, Math.abs(rawX) - maxTx);
     const overY = Math.max(0, Math.abs(rawY) - maxTy);
     const over = overX + overY;
@@ -456,7 +471,7 @@ export default function StressBallScreen() {
     const base = Math.max(1, (maxTx + maxTy) * 0.5);
     const tension = Math.min(1, over / (base * 0.75));
 
-    // Pressure scaling must remain contained in BOTH axes
+    // Pressure inflate must remain contained in BOTH axes
     const maxScaleX = containedWPressure / BALL_SIZE;
     const maxScaleY = containedHPressure / BALL_SIZE;
     const maxContainedScale = Math.max(1, Math.min(maxScaleX, maxScaleY));
@@ -469,11 +484,12 @@ export default function StressBallScreen() {
 
     const pressuring = isPressuringSV.value > 0.5;
 
-    // Normalize distance 0..1 against axis bounds (feels correct in tall stages)
+    // Normalize distance 0..1 against axis bounds
     const nx = maxTx > 0 ? Math.min(1, Math.abs(tx) / maxTx) : 0;
     const ny = maxTy > 0 ? Math.min(1, Math.abs(ty) / maxTy) : 0;
     const d = Math.min(1, Math.max(nx, ny));
 
+    // Tug deformation + wall tension
     const stretchAmt = DRAG_MAX_STRETCH + WALL_TENSION_STRETCH_ADD * tension;
     const squashAmt = DRAG_MAX_SQUASH + WALL_TENSION_SQUASH_ADD * tension;
 
@@ -534,22 +550,43 @@ export default function StressBallScreen() {
     .minDistance(DRAG_MIN_DISTANCE)
     .onBegin(() => {
       if (isPressuringSV.value > 0.5) return;
+
+      // ✅ reset per-gesture drag count flag
+      dragCountsSV.value = false;
+
       runOnJS(onDragBeginJS)();
     })
     .onUpdate((e) => {
       if (isPressuringSV.value > 0.5) return;
+
       dragX.value = e.translationX;
       dragY.value = e.translationY;
+
+      // ✅ mark as a "real drag" once threshold exceeded
+      const dist = Math.hypot(e.translationX, e.translationY);
+      if (!dragCountsSV.value && dist > DRAG_SQUEEZE_THRESHOLD) {
+        dragCountsSV.value = true;
+      }
     })
     .onEnd(() => {
       if (isPressuringSV.value > 0.5) return;
+
       dragX.value = withSpring(0, DRAG_SPRING);
       dragY.value = withSpring(0, DRAG_SPRING);
+
+      // ✅ increment squeezes on release for real drags
+      if (dragCountsSV.value) {
+        runOnJS(incPressCount)();
+      }
     })
     .onFinalize(() => {
       if (isPressuringSV.value > 0.5) return;
+
       dragX.value = withSpring(0, DRAG_SPRING);
       dragY.value = withSpring(0, DRAG_SPRING);
+
+      // ✅ always clear flag + existing finalize hook
+      dragCountsSV.value = false;
       runOnJS(onDragFinalizeJS)();
     });
 
@@ -628,7 +665,7 @@ export default function StressBallScreen() {
           <SettingsModal
             visible={settingsVisible}
             onClose={() => setSettingsVisible(false)}
-            onReset={() => setPressCount(0)}
+            onReset={reset}
             soundOn={soundOn}
             setSoundOn={setSoundOn}
           />
