@@ -11,6 +11,7 @@
 //    - Wall resistance via deformation (tension) when pushing into edge
 //    - SAFE_EDGE_PAD removes tiny pixel clipping caused by pulse/stretch/overshoot
 //    - Spring return on release
+// ✅ Phase IV: Flick / Swipe (snap home w/ velocity — no parking, no wall pause)
 //
 // IMPORTANT:
 // - No JS helpers inside useAnimatedStyle; all math is worklet-safe.
@@ -61,7 +62,7 @@ const HOLD_RAMP_MS = 1400;
 const LONG_PRESS_MIN_MS = 220;
 
 // Pressure containment margin (inflate must stay within this)
-const PRESSURE_MARGIN = 0.90;
+const PRESSURE_MARGIN = 0.92;
 const PRESSURE_INFLATE_MIN = 1.02;
 const PRESSURE_DEFORM_X_MAX = 1.14;
 const PRESSURE_DEFORM_Y_MIN = 0.88;
@@ -75,11 +76,9 @@ const IDLE_PULSE_ON = true;
 const DRAG_MIN_DISTANCE = 10;
 
 // ✅ Real-drag threshold for counting a "squeeze" on drag release
-// If translation distance exceeds this at any point during the drag, release increments Squeezes by +1
 const DRAG_SQUEEZE_THRESHOLD = 8; // px (tune 6–12)
 
 // Drag containment margin (closer to edges than pressure)
-// 0.98 means we allow movement within 98% of the stage dimension
 const DRAG_MARGIN = 0.98;
 
 // Safety pad to prevent tiny pixel clipping (pulse/stretch/spring overshoot)
@@ -92,6 +91,16 @@ const DRAG_SPRING = { stiffness: 260, damping: 20 };
 // Wall tension additions (when pushing into the edge)
 const WALL_TENSION_STRETCH_ADD = 0.04;
 const WALL_TENSION_SQUASH_ADD = 0.03;
+
+// ---------------------------
+// Flick / Swipe tuning (Phase IV)
+// ---------------------------
+// Minimum velocity magnitude to treat release as a flick
+const FLICK_MIN_VELOCITY = 900; // px/s (tune 700–1200)
+
+// Flick returns home immediately, but with the release velocity.
+// This spring is slightly punchier than DRAG_SPRING so it feels like a "snap-back."
+const FLICK_SPRING = { stiffness: 320, damping: 22 };
 
 // ---------------------------
 // Mood Drift palettes (resting state)
@@ -160,7 +169,7 @@ export default function StressBallScreen() {
 
   const [paletteIndex, setPaletteIndex] = useState(0);
 
-  // ✅ helper for UI-thread -> JS increments
+  // helper for UI-thread -> JS increments
   const incPressCount = () => setPressCount((p) => p + 1);
 
   // Shuffle bag for palette drift
@@ -201,7 +210,7 @@ export default function StressBallScreen() {
   const dragX = useSharedValue(0);
   const dragY = useSharedValue(0);
 
-  // ✅ Track whether the current drag should count as a squeeze
+  // Track whether the current drag should count as a squeeze
   const dragCountsSV = useSharedValue(false);
 
   // Shared pressuring flag (UI thread)
@@ -551,8 +560,12 @@ export default function StressBallScreen() {
     .onBegin(() => {
       if (isPressuringSV.value > 0.5) return;
 
-      // ✅ reset per-gesture drag count flag
+      // reset per-gesture drag count flag
       dragCountsSV.value = false;
+
+      // stop any existing motion so the new touch owns it
+      cancelAnimation(dragX);
+      cancelAnimation(dragY);
 
       runOnJS(onDragBeginJS)();
     })
@@ -562,30 +575,38 @@ export default function StressBallScreen() {
       dragX.value = e.translationX;
       dragY.value = e.translationY;
 
-      // ✅ mark as a "real drag" once threshold exceeded
+      // mark as a "real drag" once threshold exceeded
       const dist = Math.hypot(e.translationX, e.translationY);
       if (!dragCountsSV.value && dist > DRAG_SQUEEZE_THRESHOLD) {
         dragCountsSV.value = true;
       }
     })
-    .onEnd(() => {
+    .onEnd((e) => {
       if (isPressuringSV.value > 0.5) return;
 
-      dragX.value = withSpring(0, DRAG_SPRING);
-      dragY.value = withSpring(0, DRAG_SPRING);
-
-      // ✅ increment squeezes on release for real drags
+      // increment squeezes on release for real drags (includes flicks)
       if (dragCountsSV.value) {
         runOnJS(incPressCount)();
       }
+
+      const vMag = Math.hypot(e.velocityX, e.velocityY);
+      const isFlick = vMag > FLICK_MIN_VELOCITY;
+
+      if (isFlick) {
+        // ✅ Flick: snap home immediately with release velocity (no wall pause, no parking)
+        dragX.value = withSpring(0, { ...FLICK_SPRING, velocity: e.velocityX });
+        dragY.value = withSpring(0, { ...FLICK_SPRING, velocity: e.velocityY });
+        return;
+      }
+
+      // Normal release: spring home
+      dragX.value = withSpring(0, DRAG_SPRING);
+      dragY.value = withSpring(0, DRAG_SPRING);
     })
     .onFinalize(() => {
       if (isPressuringSV.value > 0.5) return;
 
-      dragX.value = withSpring(0, DRAG_SPRING);
-      dragY.value = withSpring(0, DRAG_SPRING);
-
-      // ✅ always clear flag + existing finalize hook
+      // keep consistent cleanup; don't stomp motion if it already ended cleanly
       dragCountsSV.value = false;
       runOnJS(onDragFinalizeJS)();
     });
