@@ -103,6 +103,12 @@ const FLICK_MIN_VELOCITY = 900; // px/s (tune 700–1200)
 const FLICK_SPRING = { stiffness: 320, damping: 22 };
 
 // ---------------------------
+// Micro wall-hit feedback (Option A)
+// ---------------------------
+// Only tick when a FAST move hits the clamp; cooldown prevents buzzing.
+const WALL_TICK_COOLDOWN_MS = 120;
+
+// ---------------------------
 // Mood Drift palettes (resting state)
 // ---------------------------
 const BALL_PALETTES: [string, string, string][] = [
@@ -198,6 +204,10 @@ export default function StressBallScreen() {
   const [stageW, setStageW] = useState<number>(0);
   const [stageH, setStageH] = useState<number>(0);
 
+  // ✅ Shared stage dimensions for worklet math (gesture clamp detection)
+  const stageWSV = useSharedValue(0);
+  const stageHSV = useSharedValue(0);
+
   // Reanimated
   const scale = useSharedValue(1);
   const pressure = useSharedValue(0);
@@ -216,10 +226,19 @@ export default function StressBallScreen() {
   // Shared pressuring flag (UI thread)
   const isPressuringSV = useSharedValue(0);
 
+  // ✅ Micro wall-hit haptic state (UI thread)
+  const lastWallTickTs = useSharedValue(0);
+  const wasClampedSV = useSharedValue(false);
+
   // JS guards
   const isPressuringRef = useRef(false);
   const didExplodeRef = useRef(false);
   const didDragHapticRef = useRef(false);
+
+  // ✅ JS haptic for wall tick (called via runOnJS)
+  const wallTick = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
 
   useEffect(() => {
     preloadSounds({
@@ -563,6 +582,9 @@ export default function StressBallScreen() {
       // reset per-gesture drag count flag
       dragCountsSV.value = false;
 
+      // reset clamp state for wall-tick logic
+      wasClampedSV.value = false;
+
       // stop any existing motion so the new touch owns it
       cancelAnimation(dragX);
       cancelAnimation(dragY);
@@ -580,6 +602,38 @@ export default function StressBallScreen() {
       if (!dragCountsSV.value && dist > DRAG_SQUEEZE_THRESHOLD) {
         dragCountsSV.value = true;
       }
+
+      // ---------------------------
+      // Option A: wall-hit micro haptic on FAST clamp
+      // (recompute same bounds as ballStyle)
+      // ---------------------------
+      const w = stageWSV.value > 0 ? stageWSV.value : BALL_SIZE * 1.9;
+      const h = stageHSV.value > 0 ? stageHSV.value : BALL_SIZE * 2.4;
+
+      const containedWDrag = w * DRAG_MARGIN;
+      const containedHDrag = h * DRAG_MARGIN;
+
+      const MAX_DRAG_STRETCH = 1 + DRAG_MAX_STRETCH + WALL_TENSION_STRETCH_ADD;
+      const SAFE_BALL = BALL_SIZE * MAX_DRAG_STRETCH;
+
+      const maxTx = Math.max(0, (containedWDrag - SAFE_BALL) / 2 - SAFE_EDGE_PAD);
+      const maxTy = Math.max(0, (containedHDrag - SAFE_BALL) / 2 - SAFE_EDGE_PAD);
+
+      const isClamped =
+        Math.abs(e.translationX) > maxTx || Math.abs(e.translationY) > maxTy;
+
+      const vMag = Math.hypot(e.velocityX ?? 0, e.velocityY ?? 0);
+      const fastEnough = vMag >= FLICK_MIN_VELOCITY;
+
+      if (isClamped && !wasClampedSV.value && fastEnough) {
+        const now = e.timeStamp ?? Date.now();
+        if (now - lastWallTickTs.value > WALL_TICK_COOLDOWN_MS) {
+          lastWallTickTs.value = now;
+          runOnJS(wallTick)();
+        }
+      }
+
+      wasClampedSV.value = isClamped;
     })
     .onEnd((e) => {
       if (isPressuringSV.value > 0.5) return;
@@ -608,6 +662,7 @@ export default function StressBallScreen() {
 
       // keep consistent cleanup; don't stomp motion if it already ended cleanly
       dragCountsSV.value = false;
+      wasClampedSV.value = false;
       runOnJS(onDragFinalizeJS)();
     });
 
@@ -646,6 +701,10 @@ export default function StressBallScreen() {
                     const { width, height } = e.nativeEvent.layout;
                     if (width > 0 && Math.abs(width - stageW) > 2) setStageW(width);
                     if (height > 0 && Math.abs(height - stageH) > 2) setStageH(height);
+
+                    // ✅ keep shared values in sync for UI-thread clamp detection
+                    if (width > 0) stageWSV.value = width;
+                    if (height > 0) stageHSV.value = height;
                   }}
                 >
                   <GestureDetector gesture={gesture}>
