@@ -15,7 +15,6 @@ import {
   Pressable,
   StyleSheet,
   View,
-  TouchableOpacity,
   SafeAreaView,
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -159,7 +158,9 @@ export default function BalloonPopper() {
           .filter((c) => c.x <= SCREEN_W + 240 * c.scale)
       );
 
-      const now = performance.now();
+      // ✅ Use RAF timestamp (always defined) instead of performance.now()
+      const now = ts;
+
       if (now >= nextBalloonAt.current) {
         spawnBalloon();
         nextBalloonAt.current = now + rand(220, 400);
