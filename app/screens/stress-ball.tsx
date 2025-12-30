@@ -626,7 +626,7 @@ export default function StressBallScreen() {
       const fastEnough = vMag >= FLICK_MIN_VELOCITY;
 
       if (isClamped && !wasClampedSV.value && fastEnough) {
-        const now = e.timeStamp ?? Date.now();
+        const now = Date.now();
         if (now - lastWallTickTs.value > WALL_TICK_COOLDOWN_MS) {
           lastWallTickTs.value = now;
           runOnJS(wallTick)();
