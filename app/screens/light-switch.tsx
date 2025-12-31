@@ -6,7 +6,11 @@
 //  1) Header counter now shows "Clicks:  X".
 //  2) Audio uses a 3-sound pool for rapid-fire clicking.
 //  3) toggle() no longer drops taps while animating and uses a faster 160ms animation.
-// No other layout / visual / geometry changes.
+// Visual polish today:
+//  4) Contrast pass: wall separation + plate readability + button state clarity (OFF vs ON).
+//  5) Option A: tone plate down slightly (less “WHITE SQUARE!”).
+//  6) Flip button travel so ON feels pressed IN.
+// No layout / geometry changes.
 
 import React, { useMemo, useRef, useState } from "react";
 import {
@@ -47,12 +51,35 @@ const { width: W, height: H } = Dimensions.get("window");
 const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 const COLOR = {
+  // Background
   bg: "#081A34",
+
+  // Lamp
   dome: "#0E0F10",
   filament: "#FFC93C",
   glassStroke: "rgba(255,255,255,0.26)",
   glassFill: "rgba(255,255,255,0.06)",
   warmGlow: "rgba(255,201,60,0.85)",
+
+  // Wall contrast pass
+  upperWall: "#0B2550",
+  chairRail: "#123061",
+  lowerWall: "#071B35",
+  panel: "rgba(255,255,255,0.06)",
+  panelStroke: "rgba(255,255,255,0.06)",
+
+  // Plate + hardware (Option A: slightly darker + calmer border)
+  plate: "#C7CBD3",
+  plateBorder: "rgba(255,255,255,0.22)",
+  plateInner: "rgba(0,0,0,0.12)",
+  screw: "#7B828D",
+  screwHighlight: "rgba(255,255,255,0.18)",
+
+  // Button states
+  buttonOff: "#2B2F36",
+  buttonOn: "#FF3131",
+  buttonSpec: "rgba(255,255,255,0.22)",
+  buttonGlow: "rgba(255,201,60,0.42)",
 };
 
 // Show Dev FAB/Menu only in debug builds
@@ -246,6 +273,17 @@ export default function LightSwitch() {
   const coneIntensity = a.interpolate({
     inputRange: [0, 1],
     outputRange: [0, 0.95],
+  });
+
+  // Button clarity (OFF vs ON)
+  const buttonColor = a.interpolate({
+    inputRange: [0, 1],
+    outputRange: [COLOR.buttonOff, COLOR.buttonOn],
+  });
+
+  const glowOpacity = a.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1],
   });
 
   const conePath = `
@@ -465,25 +503,51 @@ export default function LightSwitch() {
                 <View style={styles.screwDot} />
                 <View style={styles.screwDot} />
               </View>
+
               <View style={styles.buttonCapWrap}>
+                {/* subtle glow ring when ON */}
+                <Animated.View
+                  pointerEvents="none"
+                  style={[
+                    styles.buttonGlowRing,
+                    {
+                      opacity: glowOpacity,
+                      transform: [
+                        {
+                          scale: a.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: [0.92, 1],
+                          }),
+                        },
+                      ],
+                    },
+                  ]}
+                />
+
                 <TouchableWithoutFeedback onPress={toggle}>
                   <Animated.View
                     style={[
                       styles.buttonCap,
                       {
+                        backgroundColor: buttonColor as any,
                         transform: [
                           {
+                            // ✅ Flip travel: ON presses IN (moves down)
                             translateY: a.interpolate({
                               inputRange: [0, 1],
-                              outputRange: [4, 0],
+                              outputRange: [0, 4],
                             }),
                           },
                         ],
                       },
                     ]}
-                  />
+                  >
+                    {/* specular highlight so it reads as “real” */}
+                    <View style={styles.buttonSpec} pointerEvents="none" />
+                  </Animated.View>
                 </TouchableWithoutFeedback>
               </View>
+
               <View style={styles.screwRow}>
                 <View style={styles.screwDot} />
                 <View style={styles.screwDot} />
@@ -664,15 +728,15 @@ const styles = StyleSheet.create({
   },
   upperWall: {
     flex: 1,
-    backgroundColor: "#081A34",
+    backgroundColor: COLOR.upperWall,
   },
   chairRail: {
     height: 4,
-    backgroundColor: "#0F223F",
+    backgroundColor: COLOR.chairRail,
   },
   lowerWall: {
     flex: 1,
-    backgroundColor: "#06172B",
+    backgroundColor: COLOR.lowerWall,
     flexDirection: "row",
     paddingHorizontal: 12,
     paddingTop: 10,
@@ -680,8 +744,10 @@ const styles = StyleSheet.create({
   wainscotPanel: {
     flex: 1,
     marginHorizontal: 6,
-    borderRadius: 6,
-    backgroundColor: "rgba(255,255,255,0.03)",
+    borderRadius: 8,
+    backgroundColor: COLOR.panel,
+    borderWidth: 1,
+    borderColor: COLOR.panelStroke,
   },
 
   lampGroup: {
@@ -704,19 +770,24 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: "center",
   },
+
   buttonPlate: {
     width: 148,
     height: 148,
     borderRadius: 24,
-    backgroundColor: "#2A2D32",
+    backgroundColor: COLOR.plate,
+    borderWidth: 1,
+    borderColor: COLOR.plateBorder,
     shadowColor: "#000",
-    shadowOpacity: 0.45,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
     justifyContent: "space-between",
     paddingVertical: 12,
     paddingHorizontal: 18,
+    overflow: "hidden",
   },
+
   screwRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -725,26 +796,49 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: "#41454C",
+    backgroundColor: COLOR.screw,
+    borderWidth: 1,
+    borderColor: COLOR.screwHighlight,
     shadowColor: "#000",
-    shadowOpacity: 0.35,
-    shadowRadius: 4,
+    shadowOpacity: 0.18,
+    shadowRadius: 3,
     shadowOffset: { width: 0, height: 1 },
   },
+
   buttonCapWrap: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
   },
+
+  buttonGlowRing: {
+    position: "absolute",
+    width: 118,
+    height: 118,
+    borderRadius: 59,
+    backgroundColor: COLOR.buttonGlow,
+  },
+
   buttonCap: {
     width: 104,
     height: 104,
     borderRadius: 52,
-    backgroundColor: "#FF3131",
     shadowColor: "#000",
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.42,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    overflow: "hidden",
+  },
+
+  buttonSpec: {
+    position: "absolute",
+    top: 10,
+    left: 14,
+    width: 40,
+    height: 26,
+    borderRadius: 16,
+    backgroundColor: COLOR.buttonSpec,
+    transform: [{ rotate: "-18deg" }],
   },
 
   devFab: {
