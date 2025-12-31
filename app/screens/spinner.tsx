@@ -1,6 +1,8 @@
 // app/screens/spinner.tsx
 // Fidget Frenzy – Spinner (v0.8-dev behavior, updated asset name)
 // Physics & interaction logic preserved exactly; audio mapped to whoosh-1.mp3
+// Premium pass: visual/material polish only (no mechanic changes, no new deps)
+// + Option A: subtle world spotlight + vignette (reduces “dark void”)
 
 import React, { useEffect, useRef, useState } from "react";
 import { View, StyleSheet } from "react-native";
@@ -245,10 +247,11 @@ export default function Spinner() {
 
   const ArmGroup = ({ angle: armAngle }: { angle: string }) => (
     <View style={[styles.armGroup, { transform: [{ rotate: armAngle }] }]}>
+      {/* Arm: brushed metal with a clean sheen + subtle edge */}
       <LinearGradient
-        colors={["#444", "#aaa", "#444"]}
-        start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 1 }}
+        colors={["#101318", "#6b7280", "#e5e7eb", "#4b5563", "#0f172a"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
         style={[
           styles.armBase,
           {
@@ -258,18 +261,23 @@ export default function Spinner() {
           },
         ]}
       >
+        {/* Inner shadow strip to give “machined” depth */}
+        <View style={styles.armInnerShadow} pointerEvents="none" />
+        {/* Pinch / cutout reads as inset */}
         <View
           style={[
             styles.pinch,
             { width: CONFIG.PINCH_WIDTH, top: CONFIG.ARM_LENGTH / 2 - 16 },
           ]}
         />
+        <View style={styles.pinchEdge} pointerEvents="none" />
       </LinearGradient>
 
+      {/* Weight: rim + inner face */}
       <LinearGradient
-        colors={["#222", "#bbb", "#222"]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+        colors={["#0b0f16", "#a3aab6", "#eef2f7", "#6b7280", "#0b0f16"]}
+        start={{ x: 0.2, y: 0.1 }}
+        end={{ x: 0.9, y: 0.9 }}
         style={[
           styles.weightRim,
           {
@@ -281,18 +289,22 @@ export default function Spinner() {
         ]}
       >
         <LinearGradient
-          colors={["#3b82f6", "#2563eb", "#1e40af"]}
-          start={{ x: 0.3, y: 0.3 }}
+          colors={["#0b1b3a", "#2563eb", "#0b1b3a"]}
+          start={{ x: 0.2, y: 0.2 }}
           end={{ x: 1, y: 1 }}
           style={[
             styles.weightCore,
             {
-              width: CONFIG.WEIGHT_DIAMETER * 0.65,
-              height: CONFIG.WEIGHT_DIAMETER * 0.65,
-              borderRadius: (CONFIG.WEIGHT_DIAMETER * 0.65) / 2,
+              width: CONFIG.WEIGHT_DIAMETER * 0.68,
+              height: CONFIG.WEIGHT_DIAMETER * 0.68,
+              borderRadius: (CONFIG.WEIGHT_DIAMETER * 0.68) / 2,
             },
           ]}
-        />
+        >
+          <View style={styles.weightSpec} pointerEvents="none" />
+        </LinearGradient>
+
+        <View style={styles.weightRimSpec} pointerEvents="none" />
       </LinearGradient>
     </View>
   );
@@ -300,6 +312,40 @@ export default function Spinner() {
   return (
     <FullscreenWrapper>
       <View style={styles.root}>
+        {/* BACKGROUND DEPTH (no new deps): stacked gradients */}
+        <LinearGradient
+          colors={["#0a1326", "#0b1220"]}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          colors={["rgba(255,255,255,0.06)", "rgba(255,255,255,0)"]}
+          start={{ x: 0.15, y: 0.1 }}
+          end={{ x: 0.6, y: 0.8 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          colors={["rgba(59,130,246,0.08)", "rgba(59,130,246,0)"]}
+          start={{ x: 0.9, y: 0.0 }}
+          end={{ x: 0.3, y: 0.8 }}
+          style={StyleSheet.absoluteFill}
+        />
+
+        {/* ✅ Option A: WORLD SPOTLIGHT + VIGNETTE (minor change only) */}
+        <LinearGradient
+          colors={["rgba(255,255,255,0.08)", "rgba(255,255,255,0)"]}
+          start={{ x: 0.5, y: 0.45 }}
+          end={{ x: 0.5, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+        <LinearGradient
+          colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.35)"]}
+          start={{ x: 0.5, y: 0.2 }}
+          end={{ x: 0.5, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+
         {/* HEADER (safe-area aware, no magic numbers) */}
         <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
           <GameHeader
@@ -312,15 +358,20 @@ export default function Spinner() {
 
         {/* CONTENT: centered below the header */}
         <View style={styles.content}>
+          {/* subtle stage ring behind spinner */}
+          <View style={styles.stageRing} pointerEvents="none" />
+          <View style={styles.stageRingInner} pointerEvents="none" />
+
           <GestureDetector gesture={pan}>
             <Animated.View
               ref={bodyRef}
               onLayout={onBodyLayout}
               style={[styles.spinnerBody, animatedStyle]}
             >
+              {/* HUB: machined brass */}
               <LinearGradient
-                colors={["#7c2d12", "#f59e0b", "#7c2d12"]}
-                start={{ x: 0, y: 0 }}
+                colors={["#2b1a08", "#f59e0b", "#8a4b10"]}
+                start={{ x: 0.1, y: 0.1 }}
                 end={{ x: 1, y: 1 }}
                 style={[
                   styles.hub,
@@ -334,15 +385,23 @@ export default function Spinner() {
                 ]}
               >
                 <LinearGradient
-                  colors={["#fbbf24", "#d97706", "#78350f"]}
-                  start={{ x: 0.3, y: 0.3 }}
+                  colors={["#ffd36a", "#d97706", "#7c2d12"]}
+                  start={{ x: 0.2, y: 0.2 }}
                   end={{ x: 1, y: 1 }}
                   style={{
-                    width: CONFIG.HUB_DIAMETER * 0.75,
-                    height: CONFIG.HUB_DIAMETER * 0.75,
-                    borderRadius: (CONFIG.HUB_DIAMETER * 0.75) / 2,
+                    width: CONFIG.HUB_DIAMETER * 0.78,
+                    height: CONFIG.HUB_DIAMETER * 0.78,
+                    borderRadius: (CONFIG.HUB_DIAMETER * 0.78) / 2,
+                    justifyContent: "center",
+                    alignItems: "center",
                   }}
-                />
+                >
+                  {/* inner cap */}
+                  <View style={styles.hubCap} />
+                </LinearGradient>
+
+                {/* spec highlight */}
+                <View style={styles.hubSpec} pointerEvents="none" />
               </LinearGradient>
 
               <ArmGroup angle="0deg" />
@@ -371,7 +430,6 @@ const styles = StyleSheet.create({
   },
 
   headerWrap: {
-    // Header sits at the top and pushes content naturally (no absolute positioning)
     paddingHorizontal: 12,
     paddingBottom: 10,
     zIndex: 20,
@@ -390,7 +448,54 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  hub: { borderWidth: 3, borderColor: "#111", zIndex: 3 },
+  // Stage rings behind spinner to make it feel “mounted”
+  stageRing: {
+    position: "absolute",
+    width: 308,
+    height: 308,
+    borderRadius: 154,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.08)",
+    backgroundColor: "rgba(0,0,0,0.14)",
+  },
+  stageRingInner: {
+    position: "absolute",
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.06)",
+    backgroundColor: "rgba(255,255,255,0.02)",
+  },
+
+  // Hub
+  hub: {
+    zIndex: 3,
+    borderWidth: 2,
+    borderColor: "rgba(0,0,0,0.55)",
+    shadowColor: "#000",
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+  },
+  hubCap: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "rgba(0,0,0,0.28)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+  },
+  hubSpec: {
+    position: "absolute",
+    top: 10,
+    left: 12,
+    width: 26,
+    height: 18,
+    borderRadius: 12,
+    backgroundColor: "rgba(255,255,255,0.20)",
+    transform: [{ rotate: "-18deg" }],
+  },
 
   armGroup: {
     position: "absolute",
@@ -400,21 +505,85 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  armBase: { position: "absolute", borderRadius: 999 },
+  armBase: {
+    position: "absolute",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.55)",
+    shadowColor: "#000",
+    shadowOpacity: 0.22,
+    shadowRadius: 7,
+    shadowOffset: { width: 0, height: 3 },
+    overflow: "hidden",
+  },
+  armInnerShadow: {
+    position: "absolute",
+    left: 8,
+    right: 8,
+    top: 6,
+    bottom: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(0,0,0,0.10)",
+  },
 
   pinch: {
     position: "absolute",
     height: 32,
     borderRadius: 999,
     alignSelf: "center",
-    backgroundColor: "#0b1220",
+    backgroundColor: "rgba(0,0,0,0.55)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  pinchEdge: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
   },
 
   weightRim: {
     position: "absolute",
     justifyContent: "center",
     alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(0,0,0,0.60)",
+    shadowColor: "#000",
+    shadowOpacity: 0.30,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    overflow: "hidden",
   },
 
-  weightCore: { borderWidth: 3, borderColor: "#111" },
+  weightCore: {
+    borderWidth: 2,
+    borderColor: "rgba(0,0,0,0.55)",
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
+  weightSpec: {
+    position: "absolute",
+    top: 8,
+    left: 10,
+    width: 28,
+    height: 20,
+    borderRadius: 14,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    transform: [{ rotate: "-18deg" }],
+  },
+  weightRimSpec: {
+    position: "absolute",
+    top: 8,
+    left: 14,
+    width: 44,
+    height: 30,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.10)",
+    transform: [{ rotate: "-18deg" }],
+  },
 });
