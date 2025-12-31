@@ -6,6 +6,7 @@
 // ✅ Pop sound throttled to prevent “catch up” audio spam
 // ✅ More balloons (spawn faster + sane on-screen cap)
 // ✅ Option A: bottom “grace zone” so you can’t camp the entry line
+// ✅ B2: Pop Puff (expanding + fading ring at pop location)
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -58,6 +59,16 @@ type Cloud = {
   speed: number;
 };
 
+// B2 Pop Puff
+type Puff = {
+  id: string;
+  x: number;
+  y: number;
+  size: number;
+  scale: Animated.Value;
+  opacity: Animated.Value;
+};
+
 // Feel knobs
 const HIT_PAD = 18; // forgiving tap radius (12–24)
 const SWIPE_RADIUS = 34; // swipe pops within this radius (26–44)
@@ -70,13 +81,18 @@ const POP_GRACE_PX = 90; // 70–130 is the sweet spot
 const POP_SOUND_COOLDOWN_MS = 90; // 70–120; lower = more sound, higher = calmer
 
 // Spawn control
-const MAX_BALLOONS_ONSCREEN = 24; // 18–30; higher makes it more “arcade”
+const MAX_BALLOONS_ONSCREEN = 28; // 18–30; higher makes it more “arcade”
 const BALLOON_SPAWN_MIN_MS = 160;
 const BALLOON_SPAWN_MAX_MS = 300;
+
+// Puff control (performance safety)
+const MAX_PUFFS = 26;
+const PUFF_MS = 220;
 
 export default function BalloonPopper() {
   const [balloons, setBalloons] = useState<Balloon[]>([]);
   const [clouds, setClouds] = useState<Cloud[]>([]);
+  const [puffs, setPuffs] = useState<Puff[]>([]);
   const [score, setScore] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
@@ -123,6 +139,43 @@ export default function BalloonPopper() {
     lastPopSoundAtRef.current = now;
     playRandomFrom(popSounds as any[], "pop");
   }, [playRandomFrom]);
+
+  // ---------- B2 Pop Puff ----------
+  const addPuff = useCallback((x: number, y: number, balloonSize: number) => {
+    const id = makeId();
+
+    // Puff size tuned to feel “bloomy” without being huge
+    const base = Math.max(44, Math.min(120, balloonSize * 0.78));
+
+    const puff: Puff = {
+      id,
+      x,
+      y,
+      size: base,
+      scale: new Animated.Value(0.35),
+      opacity: new Animated.Value(0.95),
+    };
+
+    setPuffs((prev) => {
+      const next = [...prev, puff];
+      return next.length > MAX_PUFFS ? next.slice(next.length - MAX_PUFFS) : next;
+    });
+
+    Animated.parallel([
+      Animated.timing(puff.scale, {
+        toValue: 1.25,
+        duration: PUFF_MS,
+        useNativeDriver: true,
+      }),
+      Animated.timing(puff.opacity, {
+        toValue: 0,
+        duration: PUFF_MS,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setPuffs((current) => current.filter((p) => p.id !== id));
+    });
+  }, []);
 
   // ---------- Spawning ----------
   const spawnBalloon = useCallback(() => {
@@ -183,6 +236,9 @@ export default function BalloonPopper() {
         const b = copy[idx];
         if (b.popped) return prev;
 
+        // B2 Puff at the moment of pop (use current balloon center)
+        addPuff(b.x, b.y, b.size);
+
         b.popped = true;
         setScore((s) => s + 1);
         playPop();
@@ -198,7 +254,7 @@ export default function BalloonPopper() {
         return copy;
       });
     },
-    [playPop]
+    [addPuff, playPop]
   );
 
   // ---------- Hit test ----------
@@ -301,6 +357,7 @@ export default function BalloonPopper() {
     setScore(0);
     setBalloons([]);
     setClouds([]);
+    setPuffs([]);
   };
 
   return (
@@ -355,6 +412,30 @@ export default function BalloonPopper() {
                 onPressIn={handleTap}
                 android_disableSound={true}
               >
+                {/* B2: Pop Puff overlay (non-interactive) */}
+                <View style={StyleSheet.absoluteFill} pointerEvents="none">
+                  {puffs.map((p) => {
+                    const left = p.x - p.size / 2;
+                    const top = p.y - p.size / 2;
+                    return (
+                      <Animated.View
+                        key={p.id}
+                        style={[
+                          styles.puff,
+                          {
+                            width: p.size,
+                            height: p.size,
+                            left,
+                            top,
+                            opacity: p.opacity,
+                            transform: [{ scale: p.scale }],
+                          },
+                        ]}
+                      />
+                    );
+                  })}
+                </View>
+
                 {balloons.map((b) => {
                   const src: any = balloonImages[b.color];
                   const left = b.x - b.size / 2;
@@ -413,4 +494,12 @@ const styles = StyleSheet.create({
     opacity: 0.9,
   },
   balloon: { position: "absolute" },
+
+  // B2 Puff ring (simple + lightweight)
+  puff: {
+    position: "absolute",
+    borderRadius: 999,
+    borderWidth: 3,
+    borderColor: "rgba(255,255,255,0.9)",
+  },
 });
