@@ -11,6 +11,7 @@ import {
 import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
+import { LinearGradient } from "expo-linear-gradient";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -76,7 +77,6 @@ export default function Welcome() {
             if (index < TAGLINES.length - 1) {
               setIndex((prev) => prev + 1);
             } else {
-              // navigate after final tagline
               router.replace("/home");
             }
           });
@@ -98,6 +98,17 @@ export default function Welcome() {
 
   return (
     <Pressable style={styles.container} onPress={handlePress}>
+      {/* Lighter “world” gradient so logo pops */}
+      <LinearGradient
+        colors={["#7BC6FF", "#1E4F86", "#081A34"]}
+        start={{ x: 0.15, y: 0 }}
+        end={{ x: 0.85, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+
+      {/* Subtle glow behind logo (keeps it from getting lost) */}
+      <View style={styles.logoGlow} pointerEvents="none" />
+
       <View style={styles.center}>
         <View style={styles.logoWrap}>
           <Image
@@ -119,8 +130,13 @@ export default function Welcome() {
           <Text style={styles.tagline} numberOfLines={2}>
             {TAGLINES[index]}
           </Text>
+
+          {/* De-emphasized (trust-building, not shouting) */}
           <Text style={styles.subline}>{SUBLINE}</Text>
         </Animated.View>
+
+        {/* (Optional) tiny “tap to start” vibe without adding clutter */}
+        <Text style={styles.hint}>Tap anywhere</Text>
       </View>
     </Pressable>
   );
@@ -129,7 +145,6 @@ export default function Welcome() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#081A34",
     justifyContent: "center",
   },
   center: {
@@ -138,33 +153,63 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 24,
   },
+
+  logoGlow: {
+    position: "absolute",
+    left: "50%",
+    top: "42%",
+    width: W * 0.9,
+    height: W * 0.9,
+    marginLeft: -(W * 0.9) / 2,
+    marginTop: -(W * 0.9) / 2,
+    borderRadius: (W * 0.9) / 2,
+    backgroundColor: "rgba(255,255,255,0.14)",
+    opacity: 0.35,
+    transform: [{ scaleX: 1.1 }, { scaleY: 0.9 }],
+  },
+
   logoWrap: {
     width: 240,
-    height: 240, // fixed height prevents "jump"
+    height: 240,
     alignItems: "center",
     justifyContent: "center",
   },
   logo: {
-    width: 200,
-    height: 200,
+    width: 210,
+    height: 210,
   },
+
   taglineWrap: {
     minHeight: 72,
     marginTop: 22,
     paddingHorizontal: 6,
+    alignItems: "center",
   },
   tagline: {
     color: "#FFFFFF",
     fontSize: 26,
-    fontWeight: "800",
+    fontWeight: "900",
     textAlign: "center",
     letterSpacing: 0.5,
+    textShadowColor: "rgba(0,0,0,0.35)",
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 8,
   },
   subline: {
-    color: "#FDD017",
-    fontSize: 18,
-    fontWeight: "500",
+    color: "rgba(253,208,23,0.65)",
+    fontSize: 14,
+    fontWeight: "700",
     textAlign: "center",
-    marginTop: 4,
+    marginTop: 6,
+    letterSpacing: 0.2,
+  },
+
+  hint: {
+    position: "absolute",
+    bottom: 34,
+    color: "rgba(255,255,255,0.35)",
+    fontWeight: "700",
+    letterSpacing: 0.3,
+    fontSize: 12,
   },
 });
