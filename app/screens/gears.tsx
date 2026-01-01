@@ -9,19 +9,34 @@
 // ✅ UI PASS: Stage backlight/glow to fix dark-on-dark visibility (no physics changes)
 // ✅ FIX: Stop winding loop when drag motion pauses (prevents “sound continues” bug)
 // ✅ Stage standardized via PremiumStage (Gears keeps shine ON)
+//
+// ✅ TODAY FIX:
+// - Move drag rotation to Reanimated UI thread (eliminates jitter in Expo Go)
+// - Keep hold-to-reverse but allow drag immediately after hold
+// - Keep audio loops + idle stop behavior
+// ✅ CRASH FIX:
+// - No non-worklet helpers called from worklets (worklet-safe clamp)
+// - Capture restTurns on touch begin so unwind has a sane target
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   StyleSheet,
-  Animated,
-  Easing,
-  GestureResponderEvent,
   SafeAreaView,
   ImageSourcePropType,
 } from "react-native";
 import { Audio } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  cancelAnimation,
+  runOnJS,
+  useAnimatedStyle,
+  useDerivedValue,
+  useSharedValue,
+  withTiming,
+  type SharedValue,
+} from "react-native-reanimated";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
@@ -50,51 +65,123 @@ type PlacedGear = {
   mult: number;
 };
 
-export default function Gears() {
-  const spin = useRef(new Animated.Value(0)).current;
+const DRIVER_SIZE = 260;
 
+// ---- Wind/unwind feel knobs ----
+const WIND_SENSITIVITY = 1.0;
+
+const UNWIND_MS_PER_TURN = 220;
+const UNWIND_MIN_MS = 260;
+const UNWIND_MAX_MS = 30000;
+
+// ✅ Drag idle stop: if finger is down but not moving, stop winding loop
+const DRAG_IDLE_STOP_MS = 200;
+
+// Gesture thresholds
+const MOVE_THRESHOLD = 18;
+const LONG_PRESS_MS = 450;
+
+function normalizeDeltaRad(delta: number) {
+  "worklet";
+  const PI2 = Math.PI * 2;
+  let d = delta % PI2;
+  if (d > Math.PI) d -= PI2;
+  if (d < -Math.PI) d += PI2;
+  return d;
+}
+
+function turnsFromDeltaRad(dA: number) {
+  "worklet";
+  return (dA / (Math.PI * 2)) * WIND_SENSITIVITY;
+}
+
+// ✅ Worklet-safe clamp (DO NOT call plain JS helpers from worklets)
+function clampWorklet(n: number, lo: number, hi: number) {
+  "worklet";
+  return Math.max(lo, Math.min(hi, n));
+}
+
+// ---- Small helper component so we can use hooks per gear (no hooks-in-loop) ----
+function FollowerGear({
+  g,
+  spinTurns,
+  directionSV,
+}: {
+  g: PlacedGear;
+  spinTurns: SharedValue<number>;
+  directionSV: SharedValue<1 | -1>;
+}) {
+  const rotateDeg = useDerivedValue(() => {
+    const signedMult = g.mult * directionSV.value;
+    const turns = spinTurns.value * signedMult; // turns (can be negative)
+    return `${turns * 360}deg`;
+  });
+
+  const style = useAnimatedStyle(() => ({
+    transform: [{ rotate: rotateDeg.value }],
+  }));
+
+  return (
+    <Animated.Image
+      source={g.source}
+      resizeMode="contain"
+      style={[
+        styles.img,
+        {
+          width: g.size,
+          height: g.size,
+          left: g.left,
+          top: g.top,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+export default function Gears() {
   const [mode, setMode] = useState<Mode>("idle");
   const modeRef = useRef<Mode>("idle");
+
+  // UI-thread motion state (turns, unbounded)
+  const spinTurns = useSharedValue(0); // turns
+  const restTurns = useSharedValue(0); // unwind target baseline (captured on begin)
+  const directionSV = useSharedValue<1 | -1>(1);
+
+  // drag state
+  const isDragging = useSharedValue(false);
+  const movedSV = useSharedValue(false);
+
+  const dragStartTurns = useSharedValue(0);
+  const prevAngle = useSharedValue(0); // rad
+  const cumulativeTurns = useSharedValue(0);
+
+  // driver center in screen coords for atan2 (like Spinner)
+  const centerX = useSharedValue(0);
+  const centerY = useSharedValue(0);
+
+  const driverRef = useRef<View>(null);
+
   const [direction, setDirection] = useState<1 | -1>(1);
 
-  // Power = how many turns away from rest (live)
+  // React UI state
   const [power, setPower] = useState(0);
-  const restSpinRef = useRef(0);
-
-  const animRef = useRef<Animated.CompositeAnimation | null>(null);
-
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [soundOn, setSoundOn] = useState(true);
   const soundOnRef = useRef(true);
 
-  useEffect(() => {
-    soundOnRef.current = soundOn;
-  }, [soundOn]);
+  // Timers (JS)
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const idleStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setModeNow = useCallback((next: Mode) => {
     modeRef.current = next;
     setMode(next);
   }, []);
 
-  // ---------------- Rotation helper (single definition) ----------------
-  const rotateForMultiplier = useCallback(
-    (baseMult: number) => {
-      const mSigned = baseMult * direction;
-      const mAbs = Math.abs(mSigned);
-
-      const value = Animated.multiply(spin, mAbs);
-      const outputRange = mSigned >= 0 ? ["0deg", "360deg"] : ["0deg", "-360deg"];
-
-      return value.interpolate({
-        inputRange: [0, 1],
-        outputRange,
-        extrapolate: "extend",
-      });
-    },
-    [direction, spin]
-  );
-
-  const rotateDriver = useMemo(() => rotateForMultiplier(1), [rotateForMultiplier]);
+  useEffect(() => {
+    soundOnRef.current = soundOn;
+  }, [soundOn]);
 
   // ---- Audio ----
   const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
@@ -131,18 +218,10 @@ export default function Gears() {
     } catch {}
   }, []);
 
-  // ---- Animation controls ----
-  const stopNative = useCallback(() => {
-    animRef.current?.stop();
-    animRef.current = null;
-  }, []);
-
-  const pause = useCallback(() => {
-    stopNative();
-    spin.stopAnimation((v) => {
-      if (Number.isFinite(v)) spin.setValue(v);
-    });
-  }, [spin, stopNative]);
+  const stopAllAudio = useCallback(() => {
+    void safeStop("winding");
+    void safeStop("unwinding");
+  }, [safeStop]);
 
   // ---- Audio load/unload ----
   useEffect(() => {
@@ -181,16 +260,26 @@ export default function Gears() {
     })();
 
     // start clean
-    spin.setValue(0);
-    restSpinRef.current = 0;
+    spinTurns.value = 0;
+    restTurns.value = 0;
+    directionSV.value = 1;
+    setDirection(1);
     setPower(0);
     setModeNow("idle");
 
     return () => {
       cancelled = true;
 
-      stopNative();
-      spin.stopAnimation();
+      stopAllAudio();
+
+      if (longPressTimerRef.current) {
+        clearTimeout(longPressTimerRef.current);
+        longPressTimerRef.current = null;
+      }
+      if (idleStopTimerRef.current) {
+        clearTimeout(idleStopTimerRef.current);
+        idleStopTimerRef.current = null;
+      }
 
       (async () => {
         try {
@@ -204,33 +293,35 @@ export default function Gears() {
         }
       })();
     };
-  }, [setModeNow, spin, stopNative]);
+  }, [setModeNow, stopAllAudio, spinTurns, restTurns, directionSV]);
 
-  // ---- Live Power meter from spin value ----
+  // ---- Power meter (throttled via derived value) ----
+  // Power = tenths of a turn away from rest
+  const powerTenths = useDerivedValue(() => {
+    const turnsAway = Math.abs(spinTurns.value - restTurns.value);
+    const p = Math.min(9999, Math.round(turnsAway * 10));
+    return p;
+  });
+
+  // Throttle React updates to avoid unnecessary re-renders
+  const powerThrottleRef = useRef({ lastTs: 0, lastP: -1 });
   useEffect(() => {
-    let raf = 0;
-    let last = -1;
+    const id = setInterval(() => {
+      const p = powerTenths.value;
+      const now = Date.now();
+      const { lastTs, lastP } = powerThrottleRef.current;
+      if (now - lastTs < 80) return;
+      if (p !== lastP) {
+        powerThrottleRef.current.lastP = p;
+        powerThrottleRef.current.lastTs = now;
+        setPower(p);
+      } else {
+        powerThrottleRef.current.lastTs = now;
+      }
+    }, 50);
 
-    const id = spin.addListener(({ value }) => {
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-
-        const turnsAway = Math.abs(value - restSpinRef.current);
-        const p = Math.min(9999, Math.round(turnsAway * 10)); // tenths of a turn
-
-        if (p !== last) {
-          last = p;
-          setPower(p);
-        }
-      });
-    });
-
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      spin.removeListener(id);
-    };
-  }, [spin]);
+    return () => clearInterval(id);
+  }, [powerTenths]);
 
   // ---------------- Stage measurement ----------------
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
@@ -242,8 +333,21 @@ export default function Gears() {
   const driverCenterX = stageSize.w > 0 ? stageSize.w / 2 + DRIVER_LEFT_BIAS_PX : 0;
   const driverCenterY = stageSize.h > 0 ? stageSize.h - DRIVER_BOTTOM_PAD_PX : 0;
 
+  const measureDriverCenter = useCallback(() => {
+    // measureInWindow gives screen coords (what gesture absoluteX/Y uses)
+    setTimeout(() => {
+      driverRef.current?.measureInWindow((x, y, w, h) => {
+        centerX.value = x + w / 2;
+        centerY.value = y + h / 2;
+      });
+    }, 0);
+  }, [centerX, centerY]);
+
   // ---------------- Assets ----------------
-  const DRIVER_SOURCE = useMemo(() => require("../../assets/gears/gear_gold_large.png"), []);
+  const DRIVER_SOURCE = useMemo(
+    () => require("../../assets/gears/gear_gold_large.png"),
+    []
+  );
 
   const BASE_ASSETS: GearAsset[] = useMemo(
     () => [
@@ -258,256 +362,15 @@ export default function Gears() {
     []
   );
 
-  const DRIVER_SIZE = 260;
-
   // ---------------- Helpers ----------------
   const randomIn = (min: number, max: number) => min + Math.random() * (max - min);
-
-  const dist = (x1: number, y1: number, x2: number, y2: number) =>
-    Math.hypot(x1 - x2, y1 - y2);
+  const dist = (x1: number, y1: number, x2: number, y2: number) => Math.hypot(x1 - x2, y1 - y2);
 
   const pickFollowerSize = (tier: GearAsset["tier"]) => {
     if (tier === "large") return Math.round(randomIn(175, 205));
     if (tier === "medium") return Math.round(randomIn(130, 160));
     return Math.round(randomIn(90, 120));
   };
-
-  // ---------------- Wind/unwind feel knobs ----------------
-  const WIND_SENSITIVITY = 1.0;
-
-  const UNWIND_MS_PER_TURN = 220;
-  const UNWIND_MIN_MS = 260;
-  const UNWIND_MAX_MS = 30000;
-
-  const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
-
-  // ✅ Drag idle stop: if finger is down but not moving, stop winding loop
-  const DRAG_IDLE_STOP_MS = 200;
-
-  // ---------------- Responder (touch wrapper does NOT rotate) ----------------
-  const touchRef = useRef({
-    active: false,
-    moved: false,
-    longPressFired: false,
-    startPageX: 0,
-    startPageY: 0,
-    lastAngle: 0,
-
-    restSpin: 0,
-    startSpin: 0,
-    totalTurns: 0,
-
-    longPressTimer: null as ReturnType<typeof setTimeout> | null,
-    idleStopTimer: null as ReturnType<typeof setTimeout> | null,
-  });
-
-  const MOVE_THRESHOLD = 18;
-  const LONG_PRESS_MS = 450;
-
-  const angleFromEvent = useCallback((evt: GestureResponderEvent) => {
-    const ne = evt.nativeEvent;
-    const x = ne.locationX ?? DRIVER_SIZE / 2;
-    const y = ne.locationY ?? DRIVER_SIZE / 2;
-    return Math.atan2(y - DRIVER_SIZE / 2, x - DRIVER_SIZE / 2);
-  }, []);
-
-  const normalizeDelta = (delta: number) => {
-    const PI2 = Math.PI * 2;
-    let d = delta % PI2;
-    if (d > Math.PI) d -= PI2;
-    if (d < -Math.PI) d += PI2;
-    return d;
-  };
-
-  const reverseNow = useCallback(() => {
-    if (modeRef.current === "dragging" || modeRef.current === "unwinding") return;
-    setDirection((prev) => (prev === 1 ? -1 : 1));
-  }, []);
-
-  const unwindToRest = useCallback(
-    (restValue: number) => {
-      stopNative();
-
-      spin.stopAnimation((current) => {
-        const from = Number.isFinite(current) ? current : restValue;
-        const turnsAway = Math.abs(from - restValue);
-
-        const duration = clamp(
-          turnsAway * UNWIND_MS_PER_TURN,
-          UNWIND_MIN_MS,
-          UNWIND_MAX_MS
-        );
-
-        const a = Animated.timing(spin, {
-          toValue: restValue,
-          duration,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        });
-
-        animRef.current = a;
-
-        a.start(({ finished }) => {
-          if (!finished) return;
-          setModeNow("idle");
-          void safeStop("unwinding");
-        });
-      });
-    },
-    [UNWIND_MAX_MS, UNWIND_MIN_MS, UNWIND_MS_PER_TURN, safeStop, setModeNow, spin, stopNative]
-  );
-
-  const onGoldGrant = useCallback(
-    (evt: GestureResponderEvent) => {
-      if (modeRef.current === "unwinding") return;
-
-      touchRef.current.active = true;
-      touchRef.current.moved = false;
-      touchRef.current.longPressFired = false;
-
-      if (touchRef.current.idleStopTimer) {
-        clearTimeout(touchRef.current.idleStopTimer);
-        touchRef.current.idleStopTimer = null;
-      }
-
-      touchRef.current.startPageX = evt.nativeEvent.pageX ?? 0;
-      touchRef.current.startPageY = evt.nativeEvent.pageY ?? 0;
-
-      const a0 = angleFromEvent(evt);
-      touchRef.current.lastAngle = a0;
-
-      spin.stopAnimation((v) => {
-        const s = Number.isFinite(v) ? v : 0;
-        touchRef.current.restSpin = s;
-        restSpinRef.current = s;
-        touchRef.current.startSpin = s;
-        touchRef.current.totalTurns = 0;
-      });
-
-      if (touchRef.current.longPressTimer) {
-        clearTimeout(touchRef.current.longPressTimer);
-      }
-
-      touchRef.current.longPressTimer = setTimeout(() => {
-        if (!touchRef.current.active) return;
-        if (touchRef.current.moved) return;
-        touchRef.current.longPressFired = true;
-
-        void safeStop("winding");
-        void safeStop("unwinding");
-
-        reverseNow();
-      }, LONG_PRESS_MS);
-    },
-    [angleFromEvent, reverseNow, safeStop, spin]
-  );
-
-  const onGoldMove = useCallback(
-    (evt: GestureResponderEvent) => {
-      if (!touchRef.current.active) return;
-
-      const px = evt.nativeEvent.pageX ?? 0;
-      const py = evt.nativeEvent.pageY ?? 0;
-
-      const dx = px - touchRef.current.startPageX;
-      const dy = py - touchRef.current.startPageY;
-
-      if (!touchRef.current.moved) {
-        if (Math.abs(dx) + Math.abs(dy) < MOVE_THRESHOLD) return;
-
-        touchRef.current.moved = true;
-
-        if (touchRef.current.longPressTimer) {
-          clearTimeout(touchRef.current.longPressTimer);
-          touchRef.current.longPressTimer = null;
-        }
-
-        pause();
-        setModeNow("dragging");
-
-        void safeStop("unwinding");
-        void safeStartLoop("winding");
-
-        spin.stopAnimation((v) => {
-          touchRef.current.startSpin = Number.isFinite(v) ? v : 0;
-          touchRef.current.totalTurns = 0;
-        });
-
-        const a = angleFromEvent(evt);
-        touchRef.current.lastAngle = a;
-      }
-
-      if (touchRef.current.longPressFired) return;
-
-      void safeStartLoop("winding");
-
-      if (touchRef.current.idleStopTimer) clearTimeout(touchRef.current.idleStopTimer);
-      touchRef.current.idleStopTimer = setTimeout(() => {
-        if (!touchRef.current.active) return;
-        if (modeRef.current !== "dragging") return;
-        if (touchRef.current.longPressFired) return;
-        void safeStop("winding");
-      }, DRAG_IDLE_STOP_MS);
-
-      const a = angleFromEvent(evt);
-
-      const dA = normalizeDelta(a - touchRef.current.lastAngle);
-      touchRef.current.lastAngle = a;
-
-      const dTurns = (dA / (Math.PI * 2)) * WIND_SENSITIVITY;
-      touchRef.current.totalTurns += dTurns;
-
-      const dirMul = direction === 1 ? 1 : -1;
-      spin.setValue(touchRef.current.startSpin + touchRef.current.totalTurns * dirMul);
-    },
-    [
-      DRAG_IDLE_STOP_MS,
-      WIND_SENSITIVITY,
-      angleFromEvent,
-      direction,
-      pause,
-      safeStartLoop,
-      safeStop,
-      setModeNow,
-      spin,
-    ]
-  );
-
-  const onGoldRelease = useCallback(() => {
-    if (!touchRef.current.active) return;
-
-    touchRef.current.active = false;
-
-    if (touchRef.current.longPressTimer) {
-      clearTimeout(touchRef.current.longPressTimer);
-      touchRef.current.longPressTimer = null;
-    }
-
-    if (touchRef.current.idleStopTimer) {
-      clearTimeout(touchRef.current.idleStopTimer);
-      touchRef.current.idleStopTimer = null;
-    }
-
-    if (touchRef.current.longPressFired) {
-      void safeStop("winding");
-      void safeStop("unwinding");
-      setModeNow("idle");
-      return;
-    }
-
-    if (!touchRef.current.moved) {
-      void safeStop("winding");
-      void safeStop("unwinding");
-      return;
-    }
-
-    setModeNow("unwinding");
-
-    void safeStop("winding");
-    void safeStartLoop("unwinding");
-
-    unwindToRest(touchRef.current.restSpin);
-  }, [safeStartLoop, safeStop, setModeNow, unwindToRest]);
 
   // ---------------- Random layout engine ----------------
   const [placed, setPlaced] = useState<PlacedGear[]>([]);
@@ -535,13 +398,7 @@ export default function Gears() {
       const withinBounds = (cx: number, cy: number, r: number) =>
         cx - r >= margin && cx + r <= w - margin && cy - r >= margin && cy + r <= h - margin;
 
-      const violatesSingleContact = (
-        cx: number,
-        cy: number,
-        rNew: number,
-        parentId: string,
-        existing: PlacedGear[]
-      ) => {
+      const violatesSingleContact = (cx: number, cy: number, rNew: number, parentId: string, existing: PlacedGear[]) => {
         for (const g of existing) {
           if (g.id === parentId) continue;
           const r2 = g.size / 2;
@@ -592,9 +449,7 @@ export default function Gears() {
 
         for (let t = 0; t < 220; t++) {
           const parent =
-            Math.random() < 0.5
-              ? placedGears[0]
-              : placedGears[Math.floor(randomIn(0, placedGears.length))];
+            Math.random() < 0.5 ? placedGears[0] : placedGears[Math.floor(randomIn(0, placedGears.length))];
 
           const rP = parent.size / 2;
           const bite = biteBase + (asset.tier === "large" ? 2 : 0);
@@ -636,30 +491,223 @@ export default function Gears() {
     generateLayout(stageSize.w, stageSize.h);
   }, [generateLayout, stageSize.h, stageSize.w]);
 
+  // ---------------- Direction sync (React state + SharedValue) ----------------
+  const reverseNow = useCallback(() => {
+    if (modeRef.current === "dragging" || modeRef.current === "unwinding") return;
+    setDirection((prev) => (prev === 1 ? -1 : 1));
+  }, []);
+
+  useEffect(() => {
+    directionSV.value = direction;
+  }, [direction, directionSV]);
+
+  // ---------------- Timers (JS) ----------------
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const clearIdleStopTimer = useCallback(() => {
+    if (idleStopTimerRef.current) {
+      clearTimeout(idleStopTimerRef.current);
+      idleStopTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleIdleStop = useCallback(() => {
+    clearIdleStopTimer();
+    idleStopTimerRef.current = setTimeout(() => {
+      if (modeRef.current !== "dragging") return;
+      void safeStop("winding");
+    }, DRAG_IDLE_STOP_MS);
+  }, [clearIdleStopTimer, safeStop]);
+
+  const scheduleLongPressReverse = useCallback(() => {
+    clearLongPressTimer();
+    longPressTimerRef.current = setTimeout(() => {
+      if (modeRef.current !== "idle") return;
+      void safeStop("winding");
+      void safeStop("unwinding");
+      reverseNow();
+    }, LONG_PRESS_MS);
+  }, [clearLongPressTimer, reverseNow, safeStop]);
+
+  // ---------------- Gesture (UI thread) ----------------
+  const pan = useMemo(() => {
+    return Gesture.Pan()
+      .onBegin((e) => {
+        "worklet";
+        cancelAnimation(spinTurns);
+
+        // ✅ Capture unwind baseline at touch begin (matches old behavior)
+        restTurns.value = spinTurns.value;
+
+        isDragging.value = true;
+        movedSV.value = false;
+
+        dragStartTurns.value = spinTurns.value;
+        cumulativeTurns.value = 0;
+
+        const dx = e.absoluteX - centerX.value;
+        const dy = e.absoluteY - centerY.value;
+        prevAngle.value = Math.atan2(dy, dx);
+
+        runOnJS(setModeNow)("idle");
+        runOnJS(stopAllAudio)();
+        runOnJS(scheduleLongPressReverse)();
+        runOnJS(clearIdleStopTimer)();
+      })
+      .onChange((e) => {
+        "worklet";
+        if (!isDragging.value) return;
+
+        const dxAbs = Math.abs(e.translationX);
+        const dyAbs = Math.abs(e.translationY);
+
+        if (!movedSV.value) {
+          if (dxAbs + dyAbs < MOVE_THRESHOLD) return;
+
+          movedSV.value = true;
+          runOnJS(clearLongPressTimer)();
+          runOnJS(setModeNow)("dragging");
+          runOnJS(safeStop)("unwinding");
+          runOnJS(safeStartLoop)("winding");
+        }
+
+        runOnJS(scheduleIdleStop)();
+
+        const dx = e.absoluteX - centerX.value;
+        const dy = e.absoluteY - centerY.value;
+        const a = Math.atan2(dy, dx);
+
+        const dA = normalizeDeltaRad(a - prevAngle.value);
+        prevAngle.value = a;
+
+        cumulativeTurns.value += turnsFromDeltaRad(dA);
+
+        const dirMul = directionSV.value === 1 ? 1 : -1;
+        spinTurns.value = dragStartTurns.value + cumulativeTurns.value * dirMul;
+      })
+      .onEnd(() => {
+        "worklet";
+        runOnJS(clearLongPressTimer)();
+        runOnJS(clearIdleStopTimer)();
+
+        isDragging.value = false;
+
+        if (!movedSV.value) {
+          runOnJS(stopAllAudio)();
+          runOnJS(setModeNow)("idle");
+          return;
+        }
+
+        runOnJS(setModeNow)("unwinding");
+        runOnJS(safeStop)("winding");
+        runOnJS(safeStartLoop)("unwinding");
+
+        const from = spinTurns.value;
+        const rest = restTurns.value;
+        const turnsAway = Math.abs(from - rest);
+
+        // ✅ Worklet-safe clamp (prevents iOS hard crash in Expo Go)
+        const duration = clampWorklet(
+          turnsAway * UNWIND_MS_PER_TURN,
+          UNWIND_MIN_MS,
+          UNWIND_MAX_MS
+        );
+
+        spinTurns.value = withTiming(
+          rest,
+          {
+            duration,
+            easing: (t) => {
+              "worklet";
+              const inv = 1 - t;
+              return 1 - inv * inv * inv; // outCubic
+            },
+          },
+          (finished) => {
+            "worklet";
+            if (!finished) return;
+            runOnJS(setModeNow)("idle");
+            runOnJS(safeStop)("unwinding");
+          }
+        );
+      })
+      .onFinalize(() => {
+        "worklet";
+        runOnJS(clearLongPressTimer)();
+        runOnJS(clearIdleStopTimer)();
+      });
+  }, [
+    centerX,
+    centerY,
+    clearIdleStopTimer,
+    clearLongPressTimer,
+    cumulativeTurns,
+    directionSV,
+    dragStartTurns,
+    isDragging,
+    movedSV,
+    prevAngle,
+    restTurns,
+    safeStartLoop,
+    safeStop,
+    scheduleIdleStop,
+    scheduleLongPressReverse,
+    setModeNow,
+    spinTurns,
+    stopAllAudio,
+  ]);
+
+  // Driver rotation style
+  const driverRotate = useDerivedValue(() => `${spinTurns.value * 360}deg`);
+  const driverStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: driverRotate.value }],
+  }));
+
   const reset = useCallback(() => {
-    void safeStop("winding");
-    void safeStop("unwinding");
-    stopNative();
-    spin.stopAnimation();
-    spin.setValue(0);
-    restSpinRef.current = 0;
+    stopAllAudio();
+
+    clearLongPressTimer();
+    clearIdleStopTimer();
+
+    cancelAnimation(spinTurns);
+    spinTurns.value = 0;
+    restTurns.value = 0;
+    directionSV.value = 1;
+
     setDirection(1);
     setModeNow("idle");
     setPower(0);
 
-    if (touchRef.current.longPressTimer) {
-      clearTimeout(touchRef.current.longPressTimer);
-      touchRef.current.longPressTimer = null;
-    }
-    if (touchRef.current.idleStopTimer) {
-      clearTimeout(touchRef.current.idleStopTimer);
-      touchRef.current.idleStopTimer = null;
-    }
-
     if (stageSize.w > 0 && stageSize.h > 0) {
       generateLayout(stageSize.w, stageSize.h);
     }
-  }, [generateLayout, safeStop, setModeNow, spin, stageSize.h, stageSize.w, stopNative]);
+
+    measureDriverCenter();
+  }, [
+    clearIdleStopTimer,
+    clearLongPressTimer,
+    generateLayout,
+    measureDriverCenter,
+    setModeNow,
+    stageSize.h,
+    stageSize.w,
+    stopAllAudio,
+    spinTurns,
+    restTurns,
+    directionSV,
+  ]);
+
+  // ---------------- Stage measurement ----------------
+  const [stageSizeState, setStageSizeState] = useState({ w: 0, h: 0 });
+  // NOTE: keep stageSize in sync with state (avoid churn)
+  useEffect(() => {
+    setStageSize(stageSizeState);
+  }, [stageSizeState]);
 
   return (
     <FullscreenWrapper>
@@ -685,7 +733,8 @@ export default function Gears() {
                 style={styles.stageInner}
                 onLayout={(e) => {
                   const { width, height } = e.nativeEvent.layout;
-                  setStageSize({ w: width, h: height });
+                  setStageSizeState({ w: width, h: height });
+                  measureDriverCenter();
                 }}
               >
                 {/* Stage backlight / glow (visual only) */}
@@ -698,64 +747,38 @@ export default function Gears() {
                 />
                 <View pointerEvents="none" style={styles.stageGlow} />
 
-                {/* Followers (network) */}
-                {placed.map((g) => {
-                  const rotate = rotateForMultiplier(g.mult);
-                  return (
-                    <Animated.Image
-                      key={g.id}
-                      source={g.source}
-                      resizeMode="contain"
-                      style={[
-                        styles.img,
-                        {
-                          width: g.size,
-                          height: g.size,
-                          left: g.left,
-                          top: g.top,
-                          transform: [{ rotate }],
-                        },
-                      ]}
-                    />
-                  );
-                })}
+                {/* Followers */}
+                {placed.map((g) => (
+                  <FollowerGear key={g.id} g={g} spinTurns={spinTurns} directionSV={directionSV} />
+                ))}
 
-                {/* DRIVER */}
-                <View
-                  style={[
-                    styles.img,
-                    {
-                      width: DRIVER_SIZE,
-                      height: DRIVER_SIZE,
-                      left: driverCenterX - DRIVER_SIZE / 2,
-                      top: driverCenterY - DRIVER_SIZE / 2,
-                    },
-                  ]}
-                  onStartShouldSetResponder={() => true}
-                  onMoveShouldSetResponder={() => true}
-                  onResponderGrant={onGoldGrant}
-                  onResponderMove={onGoldMove}
-                  onResponderRelease={onGoldRelease}
-                  onResponderTerminate={onGoldRelease}
-                >
-                  <Animated.View
-                    style={{
-                      width: "100%",
-                      height: "100%",
-                      transform: [{ rotate: rotateDriver }],
-                    }}
+                {/* DRIVER (Gesture target) */}
+                <GestureDetector gesture={pan}>
+                  <View
+                    ref={driverRef}
+                    onLayout={measureDriverCenter}
+                    style={[
+                      styles.img,
+                      {
+                        width: DRIVER_SIZE,
+                        height: DRIVER_SIZE,
+                        left: driverCenterX - DRIVER_SIZE / 2,
+                        top: driverCenterY - DRIVER_SIZE / 2,
+                      },
+                    ]}
                   >
-                    <Animated.Image
-                      source={DRIVER_SOURCE}
-                      resizeMode="contain"
-                      style={{ width: "100%", height: "100%" }}
-                    />
-                  </Animated.View>
-                </View>
+                    <Animated.View style={[{ width: "100%", height: "100%" }, driverStyle]}>
+                      <Animated.Image
+                        source={DRIVER_SOURCE}
+                        resizeMode="contain"
+                        style={{ width: "100%", height: "100%" }}
+                      />
+                    </Animated.View>
+                  </View>
+                </GestureDetector>
               </View>
             </PremiumStage>
           </View>
-
 
           {/* Settings modal */}
           <SettingsModal
@@ -779,7 +802,6 @@ const styles = StyleSheet.create({
     paddingTop: 4,
   },
 
-  // matches your other staged games’ outer spacing pattern
   stageWrap: {
     flex: 1,
     marginHorizontal: 12,
@@ -789,7 +811,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  // inner stage surface (keeps your previous sizing behavior)
   stageInner: {
     flex: 1,
   },
