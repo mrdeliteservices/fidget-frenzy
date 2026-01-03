@@ -10,13 +10,11 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   View,
-  Text,
   StyleSheet,
   Image,
   LayoutChangeEvent,
   Dimensions,
   SafeAreaView,
-  TouchableOpacity,
 } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -48,12 +46,17 @@ import {
 // USER TUNING CONTROLS
 // ----------------------------------------------
 
+// ✅ Option A: Give tire more room (track slightly shorter)
 const TRACK_SCALE = 1.25;
-const TRACK_AREA_SCREEN_RATIO = 0.60;
+const TRACK_AREA_SCREEN_RATIO = 0.56;
 
-const TIRE_SIZE = 220;
-const TIRE_VERTICAL_OFFSET = -20;
+// ✅ Option A: Bigger tire + (now) moved down a bit to clear track
+const TIRE_SIZE = 260;
+const TIRE_VERTICAL_OFFSET = -32; // was -60 (too high). Less negative = lower.
 const TIRE_RADIUS = TIRE_SIZE / 2;
+
+// ✅ Larger touch target WITHOUT changing layout
+const TIRE_HIT_SLOP = 44;
 
 const CAR_WIDTH = 56;
 const CAR_HEIGHT = 112;
@@ -79,9 +82,9 @@ const { height: SCREEN_H } = Dimensions.get("window");
 
 // Odometer “nostalgia” world palette (Matchbox/Hot Wheels vibe)
 const ODO_WORLD = {
-  top: "#FFE7A6", // warm yellow
-  mid: "#FFB547", // orange sherbet
-  bottom: "#FF7A1A", // punchy orange
+  top: "#FFE7A6",
+  mid: "#FFB547",
+  bottom: "#FF7A1A",
 };
 
 // ✅ Standard stage surface (sampled from Gears top tone)
@@ -96,7 +99,7 @@ const CONFIG = {
 
   // Flick thresholds
   FLICK_MIN_THRESHOLD: 120, // deg/sec — lower = easier flick
-  MAX_OMEGA: 1500, // clamp to prevent chaos, was 1800
+  MAX_OMEGA: 1500, // clamp to prevent chaos
 
   // Engine logic thresholds
   ENGINE_MIN_OMEGA: 550, // must exceed to start engine (rev)
@@ -107,11 +110,6 @@ const CONFIG = {
   MAX_OMEGA_FOR_FULL_SPEED: 1400,
   LAPS_PER_SECOND_AT_MAX: 0.9,
   MILES_PER_SECOND_AT_MAX: 3.5,
-
-  // Flick impulse blend (kept for reference; logic below uses tangent first and vx only as fallback)
-  FLICK_TANGENT_WEIGHT: 1.0,
-  FLICK_VX_FALLBACK_WEIGHT: 0.25, // make flick a little easier, was 0.18
-  FLICK_VX_TO_DEG_PER_SEC: 0.25, // same spirit as your old vx multiplier
 };
 
 const LAPS_PER_DEGREE = 1 / 360;
@@ -119,11 +117,19 @@ const LAPS_PER_DEGREE = 1 / 360;
 // Prevent flick math blowups when finger ends near center
 const MIN_FLICK_RADIUS_PX = 60;
 
-// Prevent accidental snap-back reversals:
-// Allow reverse only if the opposite impulse is clearly intentional.
-const REVERSAL_MIN_CURRENT_OMEGA = 140; // deg/sec: only guard when already spinning
-const REVERSAL_ALLOW_RATIO = 0.85; // opposite impulse must be >= 85% of current speed
-const REVERSAL_ALLOW_BONUS = 120; // plus extra to ensure intention
+// Prevent accidental snap-back reversals
+const REVERSAL_MIN_CURRENT_OMEGA = 140;
+const REVERSAL_ALLOW_RATIO = 0.85;
+const REVERSAL_ALLOW_BONUS = 120;
+
+// ✅ Strong direction lock when already spinning: opposite flick must be VERY intentional
+const DIR_LOCK_MIN_CURRENT = 160; // deg/sec: only lock when already meaningfully spinning
+const DIR_LOCK_REQUIRE_RATIO = 1.35; // opposite impulse must be >= 135% of current to reverse
+const DIR_LOCK_REQUIRE_BONUS = 140; // extra “intent” boost
+
+// ✅ Brake should work when moving (not only at high speed)
+const BRAKE_MIN_OMEGA = 40; // deg/sec (very forgiving)
+const BRAKE_MIN_SLIDE_SPEED = 0.25; // ensures visible slide-to-halt even at low spin
 
 const AnimatedImage = Animated.createAnimatedComponent(Image);
 
@@ -189,7 +195,6 @@ const getTrackPose = (
   const ay = (qa.y + (qb.y - qa.y) * alt) * height;
 
   const headingRad = Math.atan2(ay - y, ax - x);
-
   return { x, y, headingRad };
 };
 
@@ -217,7 +222,6 @@ export default function OdometerScreen() {
   const tireOmega = useSharedValue(0); // deg/sec
 
   const lapProgress = useSharedValue(0); // 0–1
-  const speedFactor = useSharedValue(0); // 0–1
   const totalMiles = useSharedValue(0);
   const lastMileageInt = useSharedValue(0);
 
@@ -227,14 +231,19 @@ export default function OdometerScreen() {
   const isDragging = useSharedValue(false);
   const dragLastTouchAngle = useSharedValue(0); // radians
 
+  // For consistent direction bias when user keeps flicking
+  const lastStableDir = useSharedValue(1); // -1 / +1
+  const lastDragDir = useSharedValue(0); // -1 / 0 / +1
+  const dragStartAngle = useSharedValue(0); // radians
+
   const isBraking = useSharedValue(false);
   const carSpeed = useSharedValue(0); // 0..1
   const carDirection = useSharedValue(1); // +1 or -1
   const brakeStartSpeed = useSharedValue(0);
   const brakeElapsed = useSharedValue(0);
 
-  // Engine audio state guard (prevents repeated fade calls)
-  const engineAudioOn = useSharedValue(0); // 0 = off, 1 = on
+  // Engine audio guard
+  const engineAudioOn = useSharedValue(0); // 0=off,1=on
 
   const stopAllOdometerAudio = useCallback(() => {
     engineAudioOn.value = 0;
@@ -242,7 +251,6 @@ export default function OdometerScreen() {
     void GlobalSoundManager.stop(BRAKE_ID);
   }, []);
 
-  // ✅ CRITICAL: Stop audio when screen loses focus (navigation blur)
   useFocusEffect(
     useCallback(() => {
       return () => {
@@ -264,7 +272,7 @@ export default function OdometerScreen() {
     });
 
     lapProgress.value = idx / TRACK_N;
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     preloadSounds({
@@ -273,18 +281,12 @@ export default function OdometerScreen() {
     });
   }, []);
 
-  // Turning sound off should immediately kill sounds
   useEffect(() => {
-    if (!soundOn) {
-      stopAllOdometerAudio();
-    }
+    if (!soundOn) stopAllOdometerAudio();
   }, [soundOn, stopAllOdometerAudio]);
 
-  // If we DO unmount, also stop audio
   useEffect(() => {
-    return () => {
-      stopAllOdometerAudio();
-    };
+    return () => stopAllOdometerAudio();
   }, [stopAllOdometerAudio]);
 
   const stopEngineInstant = () => {
@@ -332,10 +334,15 @@ export default function OdometerScreen() {
 
     const absOmega = Math.abs(tireOmega.value);
 
+    // stable direction latch from actual motion
+    if (absOmega > 60) {
+      lastStableDir.value = tireOmega.value >= 0 ? 1 : -1;
+    }
+
+    // engine fade-out
     if (
       engineAudioOn.value === 1 &&
       !isBraking.value &&
-      !isDragging.value &&
       absOmega < CONFIG.ENGINE_AUDIO_STOP_OMEGA
     ) {
       engineAudioOn.value = 0;
@@ -370,7 +377,8 @@ export default function OdometerScreen() {
       }
     }
 
-    speedFactor.value = carSpeed.value;
+    // while dragging, lapProgress updated manually in onChange
+    if (isDragging.value) return;
 
     const lapsPerSec =
       CONFIG.LAPS_PER_SECOND_AT_MAX * carSpeed.value * carDirection.value;
@@ -394,7 +402,34 @@ export default function OdometerScreen() {
   // --------------------------------------------------
   // GESTURES
   // --------------------------------------------------
+
+  // ✅ Solid flick omega from cross product (r × v) / |r|²
+  const computeOmegaDegFromVelocity = (
+    x: number,
+    y: number,
+    vx: number,
+    vy: number
+  ) => {
+    "worklet";
+
+    const rx = x - TIRE_RADIUS;
+    const ry = y - TIRE_RADIUS;
+
+    const r2 = rx * rx + ry * ry;
+    const r = Math.max(MIN_FLICK_RADIUS_PX, Math.sqrt(r2));
+
+    const omegaRad = (rx * vy - ry * vx) / (r * r);
+    return (omegaRad * 180) / Math.PI;
+  };
+
   const panGesture = Gesture.Pan()
+    .minDistance(12)
+    .hitSlop({
+      top: TIRE_HIT_SLOP,
+      bottom: TIRE_HIT_SLOP,
+      left: TIRE_HIT_SLOP,
+      right: TIRE_HIT_SLOP,
+    })
     .onBegin((e) => {
       "worklet";
       if (isBraking.value) return;
@@ -403,9 +438,11 @@ export default function OdometerScreen() {
 
       const dx = e.x - TIRE_RADIUS;
       const dy = e.y - TIRE_RADIUS;
-      dragLastTouchAngle.value = Math.atan2(dy, dx);
+      const a = Math.atan2(dy, dx);
 
-      tireOmega.value = 0;
+      dragLastTouchAngle.value = a;
+      dragStartAngle.value = a;
+      lastDragDir.value = 0;
     })
     .onChange((e) => {
       "worklet";
@@ -421,6 +458,10 @@ export default function OdometerScreen() {
 
       dragLastTouchAngle.value = currentAngle;
 
+      if (Math.abs(delta) > 0.01) {
+        lastDragDir.value = delta >= 0 ? 1 : -1;
+      }
+
       const deltaDeg = (delta * 180) / Math.PI;
 
       tireAngle.value += deltaDeg;
@@ -428,7 +469,7 @@ export default function OdometerScreen() {
       const lapDelta = deltaDeg * LAPS_PER_DEGREE;
       lapProgress.value = (lapProgress.value + lapDelta + 1) % 1;
 
-      if (Math.abs(delta) > 0.0005) {
+      if (Math.abs(delta) > 0.02) {
         carDirection.value = delta >= 0 ? 1 : -1;
       }
     })
@@ -438,47 +479,36 @@ export default function OdometerScreen() {
 
       isDragging.value = false;
 
-      const dx = e.x - TIRE_RADIUS;
-      const dy = e.y - TIRE_RADIUS;
-
-      const r = Math.max(MIN_FLICK_RADIUS_PX, Math.sqrt(dx * dx + dy * dy));
-      const theta = Math.atan2(dy, dx);
-
       const vx = e.velocityX || 0;
       const vy = e.velocityY || 0;
 
-      const tangentV = vx * (-Math.sin(theta)) + vy * Math.cos(theta);
-      const omegaRad = tangentV / r;
-      const omegaTangentDeg = (omegaRad * 180) / Math.PI;
-
-      let omegaDeg = omegaTangentDeg;
-      if (Math.abs(omegaDeg) < 25) {
-        omegaDeg = vx * CONFIG.FLICK_VX_TO_DEG_PER_SEC;
-      }
+      let omegaDeg = computeOmegaDegFromVelocity(e.x, e.y, vx, vy);
 
       if (Math.abs(omegaDeg) < CONFIG.FLICK_MIN_THRESHOLD) return;
 
-      let nextOmega = clamp(
-        tireOmega.value + omegaDeg,
-        -CONFIG.MAX_OMEGA,
-        CONFIG.MAX_OMEGA
-      );
+      if (lastDragDir.value !== 0) {
+        omegaDeg = Math.abs(omegaDeg) * lastDragDir.value;
+      } else {
+        omegaDeg = Math.abs(omegaDeg) * lastStableDir.value;
+      }
 
       const cur = tireOmega.value;
       const curAbs = Math.abs(cur);
 
-      if (
-        curAbs > REVERSAL_MIN_CURRENT_OMEGA &&
-        Math.sign(nextOmega) !== Math.sign(cur)
-      ) {
+      if (curAbs > DIR_LOCK_MIN_CURRENT && Math.sign(omegaDeg) !== Math.sign(cur)) {
+        const required = curAbs * DIR_LOCK_REQUIRE_RATIO + DIR_LOCK_REQUIRE_BONUS;
+        if (Math.abs(omegaDeg) < required) {
+          omegaDeg = Math.abs(omegaDeg) * Math.sign(cur || lastStableDir.value);
+        }
+      }
+
+      let nextOmega = clamp(cur + omegaDeg, -CONFIG.MAX_OMEGA, CONFIG.MAX_OMEGA);
+
+      if (curAbs > REVERSAL_MIN_CURRENT_OMEGA && Math.sign(nextOmega) !== Math.sign(cur)) {
         const required = curAbs * REVERSAL_ALLOW_RATIO + REVERSAL_ALLOW_BONUS;
 
         if (Math.abs(omegaDeg) < required) {
-          nextOmega = clamp(
-            cur + omegaDeg * 0.25,
-            -CONFIG.MAX_OMEGA,
-            CONFIG.MAX_OMEGA
-          );
+          nextOmega = clamp(cur + omegaDeg * 0.25, -CONFIG.MAX_OMEGA, CONFIG.MAX_OMEGA);
 
           if (Math.sign(nextOmega) !== Math.sign(cur)) {
             nextOmega = cur * 0.85;
@@ -499,17 +529,24 @@ export default function OdometerScreen() {
 
   const brakeGesture = Gesture.LongPress()
     .minDuration(250)
-    .maxDistance(20)
+    .maxDistance(45)
+    .hitSlop({
+      top: TIRE_HIT_SLOP,
+      bottom: TIRE_HIT_SLOP,
+      left: TIRE_HIT_SLOP,
+      right: TIRE_HIT_SLOP,
+    })
     .onStart(() => {
       "worklet";
-
       if (isBraking.value) return;
 
       const absOmega = Math.abs(tireOmega.value);
-      let baseSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
+      if (absOmega < BRAKE_MIN_OMEGA) return;
 
-      const MIN_SLIDE_SPEED = 0.35;
-      if (baseSpeed < MIN_SLIDE_SPEED) baseSpeed = MIN_SLIDE_SPEED;
+      isDragging.value = false;
+
+      let baseSpeed = Math.min(absOmega / CONFIG.MAX_OMEGA_FOR_FULL_SPEED, 1);
+      if (baseSpeed < BRAKE_MIN_SLIDE_SPEED) baseSpeed = BRAKE_MIN_SLIDE_SPEED;
 
       brakeStartSpeed.value = baseSpeed;
       carSpeed.value = baseSpeed;
@@ -517,7 +554,7 @@ export default function OdometerScreen() {
       let dir = carDirection.value;
       if (tireOmega.value > 0) dir = 1;
       else if (tireOmega.value < 0) dir = -1;
-      if (dir === 0) dir = 1;
+      if (dir === 0) dir = lastStableDir.value;
       carDirection.value = dir;
 
       isBraking.value = true;
@@ -529,7 +566,7 @@ export default function OdometerScreen() {
       runOnJS(playBrake)();
     });
 
-  const combinedGesture = Gesture.Simultaneous(panGesture, brakeGesture);
+  const combinedGesture = Gesture.Exclusive(brakeGesture, panGesture);
 
   // --------------------------------------------------
   // ANIMATED STYLES
@@ -541,11 +578,9 @@ export default function OdometerScreen() {
   const carStyle = useAnimatedStyle(() => {
     const w = trackWidth.value;
     const h = trackHeight.value;
-
     if (!w || !h) return { opacity: 0 };
 
     const direction = carDirection.value;
-
     const { x, y, headingRad } = getTrackPose(lapProgress.value, w, h, direction);
 
     const headingDeg = (headingRad * 180) / Math.PI - 90;
@@ -570,7 +605,6 @@ export default function OdometerScreen() {
     <FullscreenWrapper>
       <View style={styles.root}>
         <SafeAreaView style={styles.safe}>
-          {/* Nostalgia “world” background */}
           <LinearGradient
             colors={[ODO_WORLD.top, ODO_WORLD.mid, ODO_WORLD.bottom]}
             start={{ x: 0.2, y: 0 }}
@@ -578,7 +612,6 @@ export default function OdometerScreen() {
             style={StyleSheet.absoluteFill}
           />
 
-          {/* Canonical header (same pattern as Spinner/Balloon) */}
           <View style={styles.headerWrap} pointerEvents="box-none">
             <GameHeader
               left={<BackButton />}
@@ -588,7 +621,6 @@ export default function OdometerScreen() {
             />
           </View>
 
-          {/* Stage */}
           <View style={styles.stageWrap}>
             <View style={styles.stageShell}>
               <PremiumStage showShine={false} style={styles.stageSurface}>
@@ -605,18 +637,25 @@ export default function OdometerScreen() {
                     />
                     <AnimatedImage
                       source={CAR_SRC}
-                      style={[styles.carBase, carStyle]}
+                      style={carStyle}
                       resizeMode="contain"
                     />
                   </View>
 
                   <View style={styles.tireWrapper}>
                     <GestureDetector gesture={combinedGesture}>
-                      <AnimatedImage
-                        source={TIRE_SRC}
-                        style={[styles.tireImage, tireStyle]}
-                        resizeMode="contain"
-                      />
+                      <Animated.View
+                        style={[styles.tireRasterWrap, tireStyle]}
+                        shouldRasterizeIOS
+                        renderToHardwareTextureAndroid
+                        needsOffscreenAlphaCompositing
+                      >
+                        <Image
+                          source={TIRE_SRC}
+                          style={styles.tireImage}
+                          resizeMode="contain"
+                        />
+                      </Animated.View>
                     </GestureDetector>
                   </View>
                 </View>
@@ -630,13 +669,18 @@ export default function OdometerScreen() {
                     lapProgress.value = 0;
                     totalMiles.value = 0;
                     lastMileageInt.value = 0;
-                    speedFactor.value = 0;
 
                     isBraking.value = false;
                     carSpeed.value = 0;
                     carDirection.value = 1;
                     brakeStartSpeed.value = 0;
                     brakeElapsed.value = 0;
+
+                    isDragging.value = false;
+                    dragLastTouchAngle.value = 0;
+                    dragStartAngle.value = 0;
+                    lastDragDir.value = 0;
+                    lastStableDir.value = 1;
 
                     setMileage(0);
                     stopEngineInstant();
@@ -681,7 +725,6 @@ const styles = StyleSheet.create({
     overflow: "hidden",
   },
 
-  // ✅ Solid stage surface so tire pops
   stageSurface: {
     backgroundColor: ODO_STAGE_SURFACE,
   },
@@ -705,15 +748,17 @@ const styles = StyleSheet.create({
     height: `${100 * TRACK_SCALE}%`,
   },
 
-  carBase: {
-    position: "absolute",
-  },
-
   tireWrapper: {
     height: SCREEN_H * (1 - TRACK_AREA_SCREEN_RATIO),
     justifyContent: "flex-start",
     alignItems: "center",
     marginTop: TIRE_VERTICAL_OFFSET,
+  },
+
+  tireRasterWrap: {
+    width: TIRE_SIZE,
+    height: TIRE_SIZE,
+    backfaceVisibility: "hidden",
   },
 
   tireImage: {
