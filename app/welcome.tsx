@@ -26,6 +26,10 @@ const TAGLINES = [
 
 const SUBLINE = "Created by MRD Elite Services";
 
+// ✅ Option A: Reserve a fixed height for headline area so layout never re-centers
+// Tune once, then it stays stable across all taglines/devices.
+const HEADLINE_SLOT_HEIGHT = 72;
+
 export default function Welcome() {
   const router = useRouter();
   const [index, setIndex] = useState(0);
@@ -84,7 +88,7 @@ export default function Welcome() {
       });
     };
     animate();
-  }, [index]);
+  }, [index, fadeAnim, translateY, router]);
 
   const handlePress = useCallback(async () => {
     try {
@@ -127,9 +131,12 @@ export default function Welcome() {
             },
           ]}
         >
-          <Text style={styles.tagline} numberOfLines={2}>
-            {TAGLINES[index]}
-          </Text>
+          {/* ✅ Fixed-height slot prevents the logo from shifting when tagline wraps */}
+          <View style={styles.headlineSlot}>
+            <Text style={styles.tagline} numberOfLines={2}>
+              {TAGLINES[index]}
+            </Text>
+          </View>
 
           {/* De-emphasized (trust-building, not shouting) */}
           <Text style={styles.subline}>{SUBLINE}</Text>
@@ -180,11 +187,18 @@ const styles = StyleSheet.create({
   },
 
   taglineWrap: {
-    minHeight: 72,
     marginTop: 22,
     paddingHorizontal: 6,
     alignItems: "center",
   },
+
+  // ✅ The reserved “slot” for headline height
+  headlineSlot: {
+    height: HEADLINE_SLOT_HEIGHT,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
   tagline: {
     color: "#FFFFFF",
     fontSize: 26,
