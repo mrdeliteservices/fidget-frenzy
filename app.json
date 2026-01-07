@@ -6,7 +6,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "dark",
+    "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
@@ -15,8 +15,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mreeliteservices.fidgetfrenzyelite",
-      "buildNumber": "5",
+      "bundleIdentifier": "com.mrdeliteservices.fidgetfrenzyelite",
+      "buildNumber": "3",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -27,7 +27,8 @@
         "backgroundColor": "#081A34"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.mreeliteservices.fidgetfrenzyelite"
+      "package": "com.mrdeliteservices.fidgetfrenzyelite",
+      "versionCode": 3
     },
     "web": {
       "favicon": "./assets/favicon.png"
