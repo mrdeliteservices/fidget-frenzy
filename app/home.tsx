@@ -36,6 +36,7 @@ import PremiumHeader from "../components/PremiumHeader";
 import PremiumStage from "../components/PremiumStage";
 import { frenzyTheme as t } from "./theme/frenzyTheme";
 import { GlobalSoundManager } from "../lib/soundManager";
+import { APP_IDENTITY } from "../constants/appIdentity";
 
 const { width: SCREEN_W } = Dimensions.get("window");
 
@@ -222,7 +223,11 @@ export default function Home() {
         {/* Header (unchanged) */}
         <PremiumHeader
           left={<View />}
-          center={<Text style={styles.headerTitle}>FIDGET FRENZY</Text>}
+          center={
+            <Text style={styles.headerTitle}>
+              {APP_IDENTITY.displayName.toUpperCase()}
+            </Text>
+          }
           right={
             <TouchableOpacity
               onPress={() => {}}
@@ -245,8 +250,8 @@ export default function Home() {
             <LinearGradient
               colors={[
                 "rgba(10,28,52,0.58)", // top (slightly brighter, but not “label”)
-                "rgba(8,24,46,0.74)",  // mid
-                "rgba(6,18,34,0.86)",  // bottom
+                "rgba(8,24,46,0.74)", // mid
+                "rgba(6,18,34,0.86)", // bottom
               ]}
               locations={[0, 0.55, 1]}
               start={{ x: 0, y: 0 }}
@@ -317,9 +322,7 @@ export default function Home() {
                 const animatedDot = useAnimatedStyle(() => {
                   const diff = Math.abs(progress.value - i);
                   return {
-                    transform: [
-                      { scale: interpolate(diff, [0, 1], [1.6, 1]) },
-                    ],
+                    transform: [{ scale: interpolate(diff, [0, 1], [1.6, 1]) }],
                     opacity: interpolate(diff, [0, 1], [1, 0.35]),
                     backgroundColor:
                       diff < 0.3
@@ -327,7 +330,9 @@ export default function Home() {
                         : "rgba(255,255,255,0.35)",
                   };
                 });
-                return <Animated.View key={i} style={[styles.dot, animatedDot]} />;
+                return (
+                  <Animated.View key={i} style={[styles.dot, animatedDot]} />
+                );
               })}
             </View>
 
