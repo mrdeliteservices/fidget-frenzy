@@ -1,104 +1,216 @@
 // lib/soundManager.ts
-// Frenzy Apps — Global Sound Manager (v0.9-dev CLEAN)
-// Expo SDK 54 — silent preload, safe playback, no console logs
-// Shared across ALL mini-games
+// Fidget Frenzy — Global Sound Manager (SDK 54)
+// ✅ Shell-standard API (setSoundEnabled / isSoundEnabled)
+// ✅ SOUND POOLING for one-shot SFX (fixes random silent/tick in Expo Go)
+// ✅ Loops remain single-instance persistent
+// ✅ Silent + safe (no logs)
 
 import { Audio, AVPlaybackSource, AVPlaybackStatus } from "expo-av";
 
-/**
- * Universal Sound Manager for all Frenzy apps
- * Handles preloading, playback, looping, and cleanup
- */
-class SoundManager {
-  private readonly active = new Map<string, Audio.Sound>();
+const DEFAULT_SFX_POOL_SIZE = 4; // 3–6 is typical; 4 is the sweet spot
 
-  // ✅ global enable/disable
+let audioModeReady: Promise<void> | null = null;
+
+async function ensureAudioModeReady() {
+  if (!audioModeReady) {
+    audioModeReady = (async () => {
+      try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          staysActiveInBackground: false,
+          playsInSilentModeIOS: true,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch {
+        // silent
+      }
+    })();
+  }
+  await audioModeReady;
+}
+
+type SfxPool = {
+  src: AVPlaybackSource;
+  sounds: Audio.Sound[];
+  next: number;
+  poolSize: number;
+};
+
+class SoundManager {
   private enabled = true;
 
-  /** Enable/disable all sound globally for the app */
-  async setEnabled(v: boolean) {
-    this.enabled = v;
+  // One-shots use a pool per id
+  private readonly sfxPools = new Map<string, SfxPool>();
 
-    // ✅ IMPORTANT:
-    // When disabling, DO NOT call expo-av stop/unload calls.
-    // expo-av can throw "audio is not enabled" during shutdown / mode transitions,
-    // causing uncaught promise crashes.
+  // Loops use one instance per id
+  private readonly loops = new Map<string, Audio.Sound>();
+
+  setEnabled(v: boolean) {
+    this.enabled = v;
     if (!v) {
-      // Just forget active handles; future play() calls are blocked by enabled flag.
-      this.active.clear();
+      // Stop everything immediately
+      this.stopAll().catch(() => {});
     }
   }
 
-  /** Returns current sound enable state */
   isEnabled() {
     return this.enabled;
   }
 
-  /** Returns true if the sound exists, is loaded, and is currently playing */
-  async isPlaying(id: string): Promise<boolean> {
-    const sound = this.active.get(id);
-    if (!sound) return false;
+  /** ---------- One-shot pooling ---------- */
+
+  private getOrCreatePool(id: string, src: AVPlaybackSource, poolSize = DEFAULT_SFX_POOL_SIZE) {
+    const existing = this.sfxPools.get(id);
+    if (existing) return existing;
+
+    const pool: SfxPool = {
+      src,
+      sounds: new Array(poolSize).fill(null),
+      next: 0,
+      poolSize,
+    } as any;
+
+    this.sfxPools.set(id, pool);
+    return pool;
+  }
+
+  private async ensurePoolSound(pool: SfxPool, index: number) {
+    const current = pool.sounds[index];
+    if (current) return current;
 
     try {
-      const status = await sound.getStatusAsync();
-      return !!(status.isLoaded && status.isPlaying);
+      const { sound } = await Audio.Sound.createAsync(pool.src, {
+        shouldPlay: false,
+        isLooping: false,
+        volume: 1.0,
+      });
+
+      // Best-effort cleanup safety (we keep loaded for reliability)
+      sound.setOnPlaybackStatusUpdate((_status: AVPlaybackStatus) => {});
+      pool.sounds[index] = sound;
+      return sound;
     } catch {
-      return false;
+      return null;
     }
   }
 
-  /** Pause without unloading */
-  async pause(id: string) {
-    const sound = this.active.get(id);
-    if (!sound) return;
+  async play(id: string, src: AVPlaybackSource, loop: boolean = false) {
+    if (!this.enabled) return;
 
-    try {
-      await sound.pauseAsync();
-    } catch {
-      // silent
+    await ensureAudioModeReady();
+
+    // Loops are handled separately
+    if (loop) {
+      await this.playLoopPersistent(id, src, 1.0);
+      return;
     }
-  }
 
-  /** Set volume on an active sound (0.0 - 1.0) */
-  async setVolume(id: string, volume: number) {
-    const sound = this.active.get(id);
+    // ✅ One-shot SFX: pooled playback
+    const pool = this.getOrCreatePool(id, src, DEFAULT_SFX_POOL_SIZE);
+
+    // If the src changes for the same id, reset the pool (rare, but safe)
+    if (pool.src !== src) {
+      await this.stop(id);
+      pool.src = src;
+    }
+
+    const idx = pool.next;
+    pool.next = (pool.next + 1) % pool.poolSize;
+
+    const sound = await this.ensurePoolSound(pool, idx);
     if (!sound) return;
 
     try {
-      const status = await sound.getStatusAsync();
-      if (status.isLoaded) {
-        await sound.setVolumeAsync(Math.max(0, Math.min(1, volume)));
+      // replayAsync is the most reliable "start now from 0"
+      await sound.replayAsync();
+    } catch {
+      // If this instance got into a bad state, rebuild just this slot
+      try {
+        await sound.unloadAsync();
+      } catch {}
+      pool.sounds[idx] = null as any;
+
+      const rebuilt = await this.ensurePoolSound(pool, idx);
+      if (!rebuilt) return;
+
+      try {
+        await rebuilt.replayAsync();
+      } catch {
+        // silent
       }
+    }
+  }
+
+  /** ---------- Loop playback ---------- */
+
+  async playLoopPersistent(id: string, src: AVPlaybackSource, volume: number = 1.0) {
+    if (!this.enabled) {
+      await this.stop(id);
+      return;
+    }
+
+    await ensureAudioModeReady();
+
+    const existing = this.loops.get(id);
+    if (existing) {
+      try {
+        await existing.setIsLoopingAsync(true);
+        await existing.setVolumeAsync(volume);
+        await existing.playAsync();
+        return;
+      } catch {
+        try {
+          await this.stop(id);
+        } catch {}
+      }
+    }
+
+    try {
+      const { sound } = await Audio.Sound.createAsync(src, {
+        shouldPlay: true,
+        isLooping: true,
+        volume,
+      });
+      this.loops.set(id, sound);
     } catch {
       // silent
     }
   }
 
-  /** Fade out then stop+unload (safe) */
-  async fadeOutAndStop(id: string, durationMs: number = 450, steps: number = 10) {
-    const sound = this.active.get(id);
-    if (!sound) return;
+  async setVolume(id: string, volume: number) {
+    const loop = this.loops.get(id);
+    if (!loop) return;
 
     try {
-      const status = await sound.getStatusAsync();
-      if (!status.isLoaded) {
-        this.untrack(id);
+      await loop.setVolumeAsync(volume);
+    } catch {
+      // silent
+    }
+  }
+
+  async fadeOutAndStop(id: string, durationMs: number = 450, steps: number = 10) {
+    const loop = this.loops.get(id);
+    if (!loop) {
+      await this.stop(id);
+      return;
+    }
+
+    try {
+      const status = await loop.getStatusAsync();
+      if (!("isLoaded" in status) || !status.isLoaded) {
+        await this.stop(id);
         return;
       }
 
       const startVol = typeof status.volume === "number" ? status.volume : 1.0;
 
-      const safeSteps = Math.max(3, Math.min(30, steps));
-      const stepMs = Math.max(10, Math.floor(durationMs / safeSteps));
-
-      for (let i = 1; i <= safeSteps; i++) {
-        const v = startVol * (1 - i / safeSteps);
+      for (let i = 0; i < steps; i++) {
+        const v = startVol * (1 - (i + 1) / steps);
         try {
-          await sound.setVolumeAsync(Math.max(0, v));
-        } catch {
-          // silent
-        }
-        await new Promise((res) => setTimeout(res, stepMs));
+          await loop.setVolumeAsync(Math.max(0, v));
+        } catch {}
+        await new Promise((r) => setTimeout(r, Math.floor(durationMs / steps)));
       }
     } catch {
       // silent
@@ -107,152 +219,83 @@ class SoundManager {
     await this.stop(id);
   }
 
-  /** Play a loop WITHOUT restarting if it already exists */
-  async playLoopPersistent(id: string, src: AVPlaybackSource, volume: number = 1.0) {
-    if (!this.enabled) return;
+  /** ---------- Stop / cleanup ---------- */
 
-    try {
-      const existing = this.active.get(id);
-
-      if (existing) {
-        const status = await existing.getStatusAsync();
-        if (status.isLoaded) {
-          await existing.setStatusAsync({ isLooping: true, volume });
-
-          if (!status.isPlaying) {
-            await existing.playAsync();
-          }
-          return;
-        }
-      }
-
-      const { sound } = await Audio.Sound.createAsync(src, {
-        shouldPlay: true,
-        isLooping: true,
-        volume,
-      });
-
-      this.active.set(id, sound);
-
-      sound.setOnPlaybackStatusUpdate((_status: AVPlaybackStatus) => {
-        // silent
-      });
-    } catch {
-      // silent
-    }
-  }
-
-  /** Play a sound effect or loop */
-  async play(id: string, src: AVPlaybackSource, loop: boolean = false) {
-    if (!this.enabled) return;
-
-    try {
-      await this.stop(id);
-
-      const { sound } = await Audio.Sound.createAsync(src, {
-        shouldPlay: true,
-        isLooping: loop,
-        volume: 1.0,
-      });
-
-      this.active.set(id, sound);
-
-      sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-        if ("didJustFinish" in status && status.didJustFinish && !loop) {
-          this.untrack(id);
-        }
-      });
-    } catch {
-      // silent
-    }
-  }
-
-  /** Stop and unload a specific sound (safe even if AV is disabled) */
   async stop(id: string) {
-    const sound = this.active.get(id);
-    if (!sound) return;
-
-    try {
-      await sound.stopAsync();
-    } catch {
-      // silent (covers "audio is not enabled")
+    // Stop loop if exists
+    const loop = this.loops.get(id);
+    if (loop) {
+      try {
+        await loop.stopAsync();
+      } catch {}
+      try {
+        await loop.unloadAsync();
+      } catch {}
+      this.loops.delete(id);
     }
 
-    try {
-      await sound.unloadAsync();
-    } catch {
-      // silent
+    // Stop pooled SFX
+    const pool = this.sfxPools.get(id);
+    if (pool) {
+      const sounds = pool.sounds.filter(Boolean) as Audio.Sound[];
+      await Promise.all(
+        sounds.map(async (s) => {
+          try {
+            await s.stopAsync();
+          } catch {}
+          try {
+            await s.unloadAsync();
+          } catch {}
+        })
+      );
+      this.sfxPools.delete(id);
     }
-
-    this.untrack(id);
   }
 
-  /** Stop and unload ALL sounds (safe even if AV is disabled) */
   async stopAll() {
-    const tasks = Array.from(this.active.entries()).map(async ([id, sound]) => {
-      try {
-        await sound.stopAsync();
-      } catch {
-        // silent
-      }
-
-      try {
-        await sound.unloadAsync();
-      } catch {
-        // silent
-      }
-
-      this.untrack(id);
-    });
-
-    await Promise.all(tasks);
+    const loopIds = Array.from(this.loops.keys());
+    const poolIds = Array.from(this.sfxPools.keys());
+    await Promise.all([...loopIds, ...poolIds].map((id) => this.stop(id)));
   }
 
-  private untrack(id: string) {
-    this.active.delete(id);
+  /** ---------- Preload ---------- */
+
+  // ✅ Preload: create pools for provided ids so first tap is never silent
+  async preloadSounds(map: Record<string, AVPlaybackSource>, poolSize = DEFAULT_SFX_POOL_SIZE) {
+    await ensureAudioModeReady();
+
+    const entries = Object.entries(map);
+    await Promise.all(
+      entries.map(async ([id, src]) => {
+        // Create pool + warm first slot
+        const pool = this.getOrCreatePool(id, src, poolSize);
+        await this.ensurePoolSound(pool, 0);
+      })
+    );
   }
 }
 
 export const GlobalSoundManager = new SoundManager();
 
-export const setSoundEnabled = async (enabled: boolean) =>
+// Required by SettingsUIProvider
+export const setSoundEnabled = async (enabled: boolean) => {
   GlobalSoundManager.setEnabled(enabled);
+};
 
 export const isSoundEnabled = () => GlobalSoundManager.isEnabled();
 
-export const playSound = async (
-  id: string,
-  src: AVPlaybackSource,
-  loop: boolean = false
-) => GlobalSoundManager.play(id, src, loop);
+// Helpers used across screens
+export const playSound = async (id: string, src: AVPlaybackSource, loop: boolean = false) =>
+  GlobalSoundManager.play(id, src, loop);
 
-export const playLoopPersistent = async (
-  id: string,
-  src: AVPlaybackSource,
-  volume: number = 1.0
-) => GlobalSoundManager.playLoopPersistent(id, src, volume);
+export const playLoopPersistent = async (id: string, src: AVPlaybackSource, volume: number = 1.0) =>
+  GlobalSoundManager.playLoopPersistent(id, src, volume);
 
-export const fadeOutAndStop = async (
-  id: string,
-  durationMs: number = 450,
-  steps: number = 10
-) => GlobalSoundManager.fadeOutAndStop(id, durationMs, steps);
+export const fadeOutAndStop = async (id: string, durationMs: number = 450, steps: number = 10) =>
+  GlobalSoundManager.fadeOutAndStop(id, durationMs, steps);
 
 export const setSoundVolume = async (id: string, volume: number) =>
   GlobalSoundManager.setVolume(id, volume);
 
-export const preloadSounds = async (sounds: Record<string, AVPlaybackSource>) => {
-  const tasks = Object.entries(sounds).map(async ([_, src]) => {
-    try {
-      const { sound } = await Audio.Sound.createAsync(src, {
-        shouldPlay: false,
-      });
-
-      await sound.unloadAsync();
-    } catch {
-      // silent
-    }
-  });
-
-  await Promise.all(tasks);
-};
+export const preloadSounds = async (sounds: Record<string, AVPlaybackSource>) =>
+  GlobalSoundManager.preloadSounds(sounds);

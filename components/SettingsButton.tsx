@@ -9,7 +9,14 @@ type Props = {
 
 export default function SettingsButton({ onPress, style }: Props) {
   return (
-    <TouchableOpacity onPress={onPress} style={[styles.button, style]}>
+    <TouchableOpacity
+      onPress={onPress}
+      style={[styles.button, style]}
+      accessibilityRole="button"
+      accessibilityLabel="Open Settings"
+      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+      activeOpacity={0.8}
+    >
       <Text style={styles.icon}>⚙️</Text>
     </TouchableOpacity>
   );

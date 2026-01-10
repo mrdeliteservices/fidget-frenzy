@@ -1,14 +1,11 @@
 // app/home.tsx
 // Fidget Frenzy — Home Screen (Premium Frame + Sherbet Halo)
-// ✅ Option A: World/stage hierarchy rebalance (Welcome → Home continuity)
-// ✅ Minor polish: remove “banner” band + stage feels more designed
-// ✅ Minor copy: consistent casing in subtitle
-// ❌ No layout changes
-// ❌ No carousel logic changes
-// ❌ No animation changes
-// ❌ No refactors
+// ✅ Shell-standard wiring: Settings icon works (useSettingsUI) + useCallback
+// ✅ Keeps ALL 6 games (FULL PRODUCT)
+// ✅ No carousel layout/animation changes
+// ✅ No refactors beyond the needed parity wiring
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -26,12 +23,12 @@ import Animated, {
   useDerivedValue,
 } from "react-native-reanimated";
 import { LinearGradient } from "expo-linear-gradient";
-import { useRouter, router } from "expo-router";
+import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
-import FullscreenWrapper from "../components/FullscreenWrapper";
+import FullscreenWrapper, { useSettingsUI } from "../components/FullscreenWrapper";
 import PremiumHeader from "../components/PremiumHeader";
 import PremiumStage from "../components/PremiumStage";
 import { frenzyTheme as t } from "./theme/frenzyTheme";
@@ -43,7 +40,7 @@ const { width: SCREEN_W } = Dimensions.get("window");
 // Carousel spacing (unchanged)
 const SPACING = 22;
 
-// Fidget list (unchanged)
+// FULL PRODUCT: all fidgets remain
 const fidgets = [
   {
     id: "1",
@@ -150,9 +147,10 @@ function FidgetCard({
   );
 }
 
-// ---------------- MAIN ----------------
-export default function Home() {
+function HomeInner() {
   const routerHook = useRouter();
+  const { openSettings } = useSettingsUI();
+
   const scrollX = useSharedValue(0);
   const lastTap = useSharedValue(0);
 
@@ -169,23 +167,27 @@ export default function Home() {
   const intervalSV = useSharedValue(ITEM_INTERVAL);
   useEffect(() => {
     intervalSV.value = ITEM_INTERVAL;
-  }, [ITEM_INTERVAL]);
+  }, [ITEM_INTERVAL, intervalSV]);
 
   useEffect(() => {
     (async () => {
-      await Promise.allSettled([
-        router.prefetch("/screens/spinner"),
-        router.prefetch("/screens/balloon-popper"),
-        router.prefetch("/screens/stress-ball"),
-        router.prefetch("/screens/light-switch"),
-        router.prefetch("/screens/odometer"),
-        router.prefetch("/screens/gears"),
-      ]);
+      // Prefetch all routes (FULL PRODUCT)
+      await Promise.allSettled(
+        [
+          routerHook.prefetch?.("/screens/spinner"),
+          routerHook.prefetch?.("/screens/balloon-popper"),
+          routerHook.prefetch?.("/screens/stress-ball"),
+          routerHook.prefetch?.("/screens/light-switch"),
+          routerHook.prefetch?.("/screens/odometer"),
+          routerHook.prefetch?.("/screens/gears"),
+        ].filter(Boolean) as any
+      );
     })();
 
     return () => {
       GlobalSoundManager.stopAll();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const onScroll = useAnimatedScrollHandler({
@@ -209,139 +211,155 @@ export default function Home() {
     routerHook.push(route);
   };
 
+  // ✅ Shell-standard Settings behavior
+  const handleOpenSettings = useCallback(async () => {
+    try {
+      await Haptics.selectionAsync();
+    } catch {}
+    openSettings();
+  }, [openSettings]);
+
   return (
-    <FullscreenWrapper>
-      <SafeAreaView style={styles.container}>
-        {/* World (unchanged from Option A) */}
-        <LinearGradient
-          colors={["#8AC9FF", "#4F89C7", "#2A4E73"]}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
+    <SafeAreaView style={styles.container}>
+      {/* World (unchanged) */}
+      <LinearGradient
+        colors={["#8AC9FF", "#4F89C7", "#2A4E73"]}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
 
-        {/* Header (unchanged) */}
-        <PremiumHeader
-          left={<View />}
-          center={
-            <Text style={styles.headerTitle}>
-              {APP_IDENTITY.displayName.toUpperCase()}
-            </Text>
-          }
-          right={
-            <TouchableOpacity
-              onPress={() => {}}
-              style={[styles.settingsBtn, { opacity: 0.35 }]}
-              activeOpacity={0.85}
-            >
-              <Ionicons
-                name="settings-sharp"
-                size={22}
-                color={t.colors.textDark}
-              />
-            </TouchableOpacity>
-          }
-        />
-
-        {/* Stage */}
-        <View style={styles.stageWrap}>
-          <PremiumStage>
-            {/* Stage fill (UPDATED): 3-stop gradient to kill “banner” band */}
-            <LinearGradient
-              colors={[
-                "rgba(10,28,52,0.58)", // top (slightly brighter, but not “label”)
-                "rgba(8,24,46,0.74)", // mid
-                "rgba(6,18,34,0.86)", // bottom
-              ]}
-              locations={[0, 0.55, 1]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 0, y: 1 }}
-              style={StyleSheet.absoluteFill}
+      {/* Header (updated only for Settings wiring + accessibility) */}
+      <PremiumHeader
+        left={<View />}
+        center={
+          <Text style={styles.headerTitle}>
+            {APP_IDENTITY.displayName.toUpperCase()}
+          </Text>
+        }
+        right={
+          <TouchableOpacity
+            onPress={handleOpenSettings}
+            style={styles.settingsBtn}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Open Settings"
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons
+              name="settings-sharp"
+              size={22}
+              color={t.colors.textDark}
             />
+          </TouchableOpacity>
+        }
+      />
 
-            {/* Stage “sheen” overlay (NEW): makes stage feel designed */}
-            <LinearGradient
-              colors={[
-                "rgba(255,255,255,0.08)",
-                "rgba(255,255,255,0.02)",
-                "rgba(255,255,255,0.00)",
-              ]}
-              locations={[0, 0.25, 1]}
-              start={{ x: 0.5, y: 0 }}
-              end={{ x: 0.5, y: 1 }}
-              pointerEvents="none"
-              style={StyleSheet.absoluteFill}
-            />
+      {/* Stage */}
+      <View style={styles.stageWrap}>
+        <PremiumStage>
+          {/* Stage fill (3-stop gradient) */}
+          <LinearGradient
+            colors={[
+              "rgba(10,28,52,0.58)",
+              "rgba(8,24,46,0.74)",
+              "rgba(6,18,34,0.86)",
+            ]}
+            locations={[0, 0.55, 1]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
 
-            <View style={styles.stageHeader}>
-              <Text style={styles.stageTitle}>Pick your Frenzy</Text>
+          {/* Stage sheen overlay */}
+          <LinearGradient
+            colors={[
+              "rgba(255,255,255,0.08)",
+              "rgba(255,255,255,0.02)",
+              "rgba(255,255,255,0.00)",
+            ]}
+            locations={[0, 0.25, 1]}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            pointerEvents="none"
+            style={StyleSheet.absoluteFill}
+          />
 
-              {/* Copy fix: consistent casing */}
-              <Text style={styles.stageSub}>spin • tap • unwind your brain</Text>
+          <View style={styles.stageHeader}>
+            <Text style={styles.stageTitle}>Pick your Frenzy</Text>
+            <Text style={styles.stageSub}>spin • tap • unwind your brain</Text>
+            <View style={styles.stageLine} />
+          </View>
 
-              <View style={styles.stageLine} />
-            </View>
-
-            <View
-              style={{ flex: 1, justifyContent: "center" }}
-              onLayout={(e) => {
-                const w = e.nativeEvent.layout.width;
-                if (w && Math.abs(w - carouselW) > 2) setCarouselW(w);
+          <View
+            style={{ flex: 1, justifyContent: "center" }}
+            onLayout={(e) => {
+              const w = e.nativeEvent.layout.width;
+              if (w && Math.abs(w - carouselW) > 2) setCarouselW(w);
+            }}
+          >
+            <Animated.FlatList
+              data={fidgets}
+              keyExtractor={(item) => item.id}
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              snapToInterval={ITEM_INTERVAL}
+              decelerationRate="fast"
+              bounces={false}
+              contentContainerStyle={{
+                paddingHorizontal: PADDING_H,
+                alignItems: "center",
               }}
-            >
-              <Animated.FlatList
-                data={fidgets}
-                keyExtractor={(item) => item.id}
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                snapToInterval={ITEM_INTERVAL}
-                decelerationRate="fast"
-                bounces={false}
-                contentContainerStyle={{
-                  paddingHorizontal: PADDING_H,
-                  alignItems: "center",
-                }}
-                onScroll={onScroll}
-                scrollEventThrottle={16}
-                renderItem={({ item, index }) => (
-                  <FidgetCard
-                    item={item}
-                    index={index}
-                    scrollX={scrollX}
-                    intervalSV={intervalSV}
-                    cardWidth={CARD_WIDTH}
-                    onPress={() => handleTap(item.route)}
-                  />
-                )}
-              />
-            </View>
+              onScroll={onScroll}
+              scrollEventThrottle={16}
+              renderItem={({ item, index }) => (
+                <FidgetCard
+                  item={item}
+                  index={index}
+                  scrollX={scrollX}
+                  intervalSV={intervalSV}
+                  cardWidth={CARD_WIDTH}
+                  onPress={() => handleTap(item.route)}
+                />
+              )}
+            />
+          </View>
 
-            {/* Dots (unchanged) */}
-            <View style={styles.dotsWrap}>
-              {fidgets.map((_, i) => {
-                const animatedDot = useAnimatedStyle(() => {
-                  const diff = Math.abs(progress.value - i);
-                  return {
-                    transform: [{ scale: interpolate(diff, [0, 1], [1.6, 1]) }],
-                    opacity: interpolate(diff, [0, 1], [1, 0.35]),
-                    backgroundColor:
-                      diff < 0.3
-                        ? t.colors.accent
-                        : "rgba(255,255,255,0.35)",
-                  };
-                });
-                return (
-                  <Animated.View key={i} style={[styles.dot, animatedDot]} />
-                );
-              })}
-            </View>
+          {/* Dots */}
+          <View style={styles.dotsWrap}>
+            {fidgets.map((_, i) => {
+              const animatedDot = useAnimatedStyle(() => {
+                const diff = Math.abs(progress.value - i);
+                return {
+                  transform: [{ scale: interpolate(diff, [0, 1], [1.6, 1]) }],
+                  opacity: interpolate(diff, [0, 1], [1, 0.35]),
+                  backgroundColor:
+                    diff < 0.3
+                      ? t.colors.accent
+                      : "rgba(255,255,255,0.35)",
+                };
+              });
+              return <Animated.View key={i} style={[styles.dot, animatedDot]} />;
+            })}
+          </View>
 
-            <Text style={styles.tagline}>
-              Because everyone needs a little Frenzy
-            </Text>
-          </PremiumStage>
-        </View>
-      </SafeAreaView>
+          <Text style={styles.tagline}>
+            Because everyone needs a little Frenzy
+          </Text>
+        </PremiumStage>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+export default function Home() {
+  const handleReset = useCallback(() => {
+    GlobalSoundManager.stopAll();
+  }, []);
+
+  return (
+    <FullscreenWrapper appName={APP_IDENTITY.displayName} onReset={handleReset}>
+      <HomeInner />
     </FullscreenWrapper>
   );
 }
@@ -360,6 +378,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 14,
+    opacity: 1,
   },
 
   stageWrap: {

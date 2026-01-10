@@ -1,8 +1,7 @@
-// Fidget Frenzy – SettingsModal v0.9-dev unified
+// SettingsModal — unified + reusable across Frenzy shells
 // Expo SDK 54 / RN 0.81
-// Unified across all Frenzy modules (Stress Ball, Spinner, etc.)
 
-import React from "react";
+import React, { useMemo } from "react";
 import {
   View,
   Text,
@@ -11,6 +10,9 @@ import {
   StyleSheet,
   Switch,
 } from "react-native";
+import Constants from "expo-constants";
+import { BRAND_ATTRIBUTION } from "../constants/branding";
+import { APP_IDENTITY } from "../constants/appIdentity";
 
 type Props = {
   visible: boolean;
@@ -18,7 +20,29 @@ type Props = {
   onReset: () => void;
   soundOn: boolean;
   setSoundOn: (v: boolean) => void;
+
+  // New: allow each shell to override its display name cleanly.
+  // If not provided, defaults to Frenzy Apps.
+  appName?: string;
 };
+
+function getVersionBestEffort(): string {
+  const anyConstants: any = Constants;
+
+  const version =
+    anyConstants?.expoConfig?.version ||
+    anyConstants?.manifest?.version ||
+    anyConstants?.manifest2?.extra?.expoClient?.version;
+
+  const iosBuild = anyConstants?.expoConfig?.ios?.buildNumber;
+  const androidBuild = anyConstants?.expoConfig?.android?.versionCode;
+
+  const build = iosBuild ?? androidBuild;
+
+  if (version && build != null) return `${version} (${build})`;
+  if (version) return String(version);
+  return "—";
+}
 
 export default function SettingsModal({
   visible,
@@ -26,13 +50,34 @@ export default function SettingsModal({
   onReset,
   soundOn,
   setSoundOn,
+  appName = APP_IDENTITY.displayName,
 }: Props) {
+  const version = useMemo(() => getVersionBestEffort(), []);
+
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
+    <Modal
+      transparent
+      visible={visible}
+      animationType="fade"
+      onRequestClose={onClose}
+    >
       <View style={styles.overlay}>
         <View style={styles.modal}>
           <Text style={styles.title}>Settings</Text>
 
+          {/* App / Version / Attribution (LOCKED requirement) */}
+          <View style={styles.metaBlock}>
+            <Text style={styles.metaLabel}>App</Text>
+            <Text style={styles.metaValue}>{appName}</Text>
+
+            <Text style={[styles.metaLabel, { marginTop: 10 }]}>Version</Text>
+            <Text style={styles.metaValue}>{version}</Text>
+
+            <Text style={[styles.metaLabel, { marginTop: 10 }]}>Attribution</Text>
+            <Text style={styles.metaValue}>{BRAND_ATTRIBUTION}</Text>
+          </View>
+
+          {/* Existing controls */}
           <View style={styles.row}>
             <Text style={styles.label}>Sound</Text>
             <Switch
@@ -44,12 +89,28 @@ export default function SettingsModal({
           </View>
 
           <View style={styles.buttons}>
-            <TouchableOpacity style={[styles.button, styles.reset]} onPress={onReset}>
-              <Text style={[styles.buttonText, { color: "#FDD017" }]}>Reset</Text>
+            <TouchableOpacity
+              style={[styles.button, styles.reset]}
+              onPress={onReset}
+              accessibilityRole="button"
+              accessibilityLabel="Reset"
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.buttonText, { color: "#FDD017" }]}>
+                Reset
+              </Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[styles.button, styles.close]} onPress={onClose}>
-              <Text style={[styles.buttonText, { color: "#fff" }]}>Close</Text>
+            <TouchableOpacity
+              style={[styles.button, styles.close]}
+              onPress={onClose}
+              accessibilityRole="button"
+              accessibilityLabel="Close Settings"
+              activeOpacity={0.85}
+            >
+              <Text style={[styles.buttonText, { color: "#fff" }]}>
+                Close
+              </Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -66,10 +127,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   modal: {
-    width: "80%",
+    width: "84%",
     backgroundColor: "#0B1E3D",
     borderRadius: 20,
-    padding: 24,
+    padding: 22,
     shadowColor: "#000",
     shadowOpacity: 0.4,
     shadowRadius: 8,
@@ -80,13 +141,37 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: "700",
     textAlign: "center",
-    marginBottom: 24,
+    marginBottom: 16,
   },
+
+  metaBlock: {
+    backgroundColor: "rgba(255,255,255,0.06)",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.10)",
+    marginBottom: 18,
+  },
+  metaLabel: {
+    color: "rgba(255,255,255,0.65)",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    textTransform: "uppercase",
+  },
+  metaValue: {
+    marginTop: 6,
+    color: "#fff",
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: "600",
+  },
+
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 28,
+    marginBottom: 22,
   },
   label: {
     color: "#fff",

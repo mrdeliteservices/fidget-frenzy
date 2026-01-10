@@ -7,6 +7,9 @@
 // ✅ More balloons (spawn faster + sane on-screen cap)
 // ✅ Option A: bottom “grace zone” so you can’t camp the entry line
 // ✅ B2: Pop Puff (expanding + fading ring at pop location)
+// ✅ NEW: Shell-standard Settings + global sound (useSettingsUI, no local modal)
+// ✅ FIX: Local pooled pop SFX (consistent playback in Expo Go)
+// ✅ FIX: Prevent loop effect from re-running / tearing down audio
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -21,12 +24,12 @@ import {
 } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import { Audio } from "expo-av";
 
 import BackButton from "../../components/BackButton";
-import FullscreenWrapper from "../../components/FullscreenWrapper";
-import SettingsModal from "../../components/SettingsModal";
+import FullscreenWrapper, { useSettingsUI } from "../../components/FullscreenWrapper";
 import GameHeader from "../../components/GameHeader";
-import { playSound, preloadSounds } from "../../lib/soundManager";
+import { GlobalSoundManager } from "../../lib/soundManager";
 
 import {
   balloonImages,
@@ -70,37 +73,50 @@ type Puff = {
 };
 
 // Feel knobs
-const HIT_PAD = 18; // forgiving tap radius (12–24)
-const SWIPE_RADIUS = 34; // swipe pops within this radius (26–44)
+const HIT_PAD = 18;
+const SWIPE_RADIUS = 34;
 
-// ✅ Option A: Bottom grace zone (balloon must rise into playfield before it can be popped)
-// This prevents “camping” the bottom edge and popping on entry.
-const POP_GRACE_PX = 90; // 70–130 is the sweet spot
+// Option A: Bottom grace zone
+const POP_GRACE_PX = 90;
 
 // Sound control
-const POP_SOUND_COOLDOWN_MS = 90; // 70–120; lower = more sound, higher = calmer
+const POP_SOUND_COOLDOWN_MS = 90;
 
 // Spawn control
-const MAX_BALLOONS_ONSCREEN = 28; // 18–30; higher makes it more “arcade”
+const MAX_BALLOONS_ONSCREEN = 28;
 const BALLOON_SPAWN_MIN_MS = 160;
 const BALLOON_SPAWN_MAX_MS = 300;
 
-// Puff control (performance safety)
+// Puff control
 const MAX_PUFFS = 26;
 const PUFF_MS = 220;
 
+// Local SFX pooling
+const POP_POOL_SIZE = 4;
+
+type SoundPool = {
+  sounds: Audio.Sound[];
+  next: number;
+};
+
 export default function BalloonPopper() {
+  const { openSettings, soundOn } = useSettingsUI();
+
   const [balloons, setBalloons] = useState<Balloon[]>([]);
   const [clouds, setClouds] = useState<Cloud[]>([]);
   const [puffs, setPuffs] = useState<Puff[]>([]);
   const [score, setScore] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [soundOn, setSoundOn] = useState(true);
 
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef(0);
   const nextBalloonAt = useRef(0);
   const nextCloudAt = useRef(0);
+
+  // Track balloon count without making callbacks unstable
+  const balloonsCountRef = useRef(0);
+  useEffect(() => {
+    balloonsCountRef.current = balloons.length;
+  }, [balloons.length]);
 
   // Playfield offset (page coords -> local coords)
   const playfieldRef = useRef<View | null>(null);
@@ -114,37 +130,126 @@ export default function BalloonPopper() {
     []
   );
 
-  // ---------- Preload sounds ----------
-  useEffect(() => {
-    const makeMap = (arr: any[], key: string) =>
-      Object.fromEntries(arr.map((src, i) => [`${key}${i}`, src]));
-    preloadSounds({
-      ...makeMap(popSounds as any[], "pop"),
-    });
+  // ---------------- LOCAL POP SOUND POOLS ----------------
+  const popPoolsRef = useRef<SoundPool[] | null>(null);
+  const audioReadyRef = useRef(false);
+
+  const ensureAudioReady = useCallback(async () => {
+    if (audioReadyRef.current) return;
+    try {
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: false,
+        staysActiveInBackground: false,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
+      });
+    } catch {
+      // silent
+    }
+    audioReadyRef.current = true;
   }, []);
 
-  const playRandomFrom = useCallback(
-    async (arr: any[], key: string) => {
-      if (!soundOn || !arr || arr.length === 0) return;
-      const idx = Math.floor(Math.random() * arr.length);
-      // Fire-and-forget; do not await during rapid pops
-      playSound(`${key}${idx}`, arr[idx]).catch(() => {});
-    },
-    [soundOn]
-  );
+  const unloadPopPools = useCallback(async () => {
+    const pools = popPoolsRef.current;
+    popPoolsRef.current = null;
+
+    if (!pools) return;
+
+    await Promise.all(
+      pools.flatMap((pool) =>
+        pool.sounds.map(async (s) => {
+          try {
+            await s.stopAsync();
+          } catch {}
+          try {
+            await s.unloadAsync();
+          } catch {}
+        })
+      )
+    );
+  }, []);
+
+  const buildPopPools = useCallback(async () => {
+    await ensureAudioReady();
+
+    const sources = (popSounds as any[]) ?? [];
+    if (!sources.length) return;
+
+    const pools: SoundPool[] = [];
+
+    for (let i = 0; i < sources.length; i++) {
+      const src = sources[i];
+      const poolSounds: Audio.Sound[] = [];
+
+      for (let k = 0; k < POP_POOL_SIZE; k++) {
+        try {
+          const { sound } = await Audio.Sound.createAsync(src, {
+            shouldPlay: false,
+            isLooping: false,
+            volume: 1.0,
+          });
+          poolSounds.push(sound);
+        } catch {
+          // keep going
+        }
+      }
+
+      pools.push({ sounds: poolSounds, next: 0 });
+    }
+
+    popPoolsRef.current = pools;
+
+    // Warm engine (prevents first tap silent on some setups)
+    try {
+      const firstSound = pools[0]?.sounds?.[0];
+      if (firstSound) {
+        await firstSound.setVolumeAsync(0.001);
+        await firstSound.replayAsync();
+        setTimeout(() => {
+          firstSound.setVolumeAsync(1.0).catch(() => {});
+          firstSound.stopAsync().catch(() => {});
+        }, 60);
+      }
+    } catch {
+      // silent
+    }
+  }, [ensureAudioReady]);
+
+  // Build pool ONCE on mount; unload ONLY on unmount
+  useEffect(() => {
+    buildPopPools().catch(() => {});
+    return () => {
+      unloadPopPools().catch(() => {});
+    };
+  }, [buildPopPools, unloadPopPools]);
+
+  const playPooledPop = useCallback(() => {
+    if (!soundOn) return;
+
+    const pools = popPoolsRef.current;
+    if (!pools || pools.length === 0) return;
+
+    const soundIdx = Math.floor(Math.random() * pools.length);
+    const pool = pools[soundIdx];
+    if (!pool || pool.sounds.length === 0) return;
+
+    const s = pool.sounds[pool.next % pool.sounds.length];
+    pool.next = (pool.next + 1) % Math.max(1, pool.sounds.length);
+
+    s.replayAsync().catch(() => {});
+  }, [soundOn]);
 
   const playPop = useCallback(() => {
     const now = Date.now();
     if (now - lastPopSoundAtRef.current < POP_SOUND_COOLDOWN_MS) return;
     lastPopSoundAtRef.current = now;
-    playRandomFrom(popSounds as any[], "pop");
-  }, [playRandomFrom]);
+    playPooledPop();
+  }, [playPooledPop]);
 
   // ---------- B2 Pop Puff ----------
   const addPuff = useCallback((x: number, y: number, balloonSize: number) => {
     const id = makeId();
-
-    // Puff size tuned to feel “bloomy” without being huge
     const base = Math.max(44, Math.min(120, balloonSize * 0.78));
 
     const puff: Puff = {
@@ -177,19 +282,19 @@ export default function BalloonPopper() {
     });
   }, []);
 
-  // ---------- Spawning ----------
+  // ---------- Spawning (STABLE) ----------
   const spawnBalloon = useCallback(() => {
-    if (balloons.length >= MAX_BALLOONS_ONSCREEN) return;
+    // ✅ do NOT depend on balloons.length (keeps callback stable)
+    if (balloonsCountRef.current >= MAX_BALLOONS_ONSCREEN) return;
 
     const color = pick(colors);
     const size = rand(58, 110);
     const half = size / 2;
     const x = rand(half + 6, SCREEN_W - half - 6);
 
-    // Start below screen so entry feels natural
     const y = SCREEN_H + half + 8;
-
     const speed = rand(1.2, 2.8);
+
     const b: Balloon = {
       id: makeId(),
       color,
@@ -201,10 +306,8 @@ export default function BalloonPopper() {
       scale: new Animated.Value(1),
     };
 
-    setBalloons((prev) =>
-      prev.length > 60 ? [...prev.slice(10), b] : [...prev, b]
-    );
-  }, [balloons.length, colors]);
+    setBalloons((prev) => (prev.length > 60 ? [...prev.slice(10), b] : [...prev, b]));
+  }, [colors]);
 
   const spawnCloud = useCallback(() => {
     const imgIndex = Math.floor(rand(0, cloudImages.length));
@@ -236,7 +339,6 @@ export default function BalloonPopper() {
         const b = copy[idx];
         if (b.popped) return prev;
 
-        // B2 Puff at the moment of pop (use current balloon center)
         addPuff(b.x, b.y, b.size);
 
         b.popped = true;
@@ -260,15 +362,12 @@ export default function BalloonPopper() {
   // ---------- Hit test ----------
   const hitTestAt = useCallback(
     (x: number, y: number, radiusPad: number) => {
-      // grace line: balloon must rise enough before it can be popped
       const graceLineY = SCREEN_H - POP_GRACE_PX;
 
       for (let i = balloons.length - 1; i >= 0; i--) {
         const b = balloons[i];
         if (b.popped) continue;
 
-        // ✅ Option A: do NOT allow popping while balloon is still in the grace zone
-        // Use balloon "top" to decide when it's entered playfield enough.
         const topOfBalloon = b.y - b.size / 2;
         if (topOfBalloon > graceLineY) continue;
 
@@ -283,7 +382,7 @@ export default function BalloonPopper() {
     [balloons]
   );
 
-  // ---------- Main loop ----------
+  // ---------- Main loop (STABLE) ----------
   useEffect(() => {
     const loop = (ts: number) => {
       if (!lastTsRef.current) lastTsRef.current = ts;
@@ -320,6 +419,9 @@ export default function BalloonPopper() {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
       lastTsRef.current = 0;
+
+      // Do NOT unload pooled SFX here (loop effect must not tear down audio)
+      GlobalSoundManager.stopAll().catch(() => {});
     };
   }, [spawnBalloon, spawnCloud]);
 
@@ -341,7 +443,7 @@ export default function BalloonPopper() {
   const swipeGesture = useMemo(() => {
     return Gesture.Pan()
       .runOnJS(true)
-      .minDistance(2) // keeps “rest finger and swirl” behavior
+      .minDistance(2)
       .onUpdate((ev) => {
         const off = playfieldOffsetRef.current;
         const x = ev.absoluteX - off.x;
@@ -353,15 +455,22 @@ export default function BalloonPopper() {
   }, [hitTestAt, popBalloonById]);
 
   // ---------- Reset ----------
-  const reset = () => {
+  const reset = useCallback(() => {
     setScore(0);
     setBalloons([]);
     setClouds([]);
     setPuffs([]);
-  };
+
+    GlobalSoundManager.stopAll().catch(() => {});
+
+    // Rebuild pools on reset (safe)
+    unloadPopPools()
+      .then(() => buildPopPools())
+      .catch(() => {});
+  }, [unloadPopPools, buildPopPools]);
 
   return (
-    <FullscreenWrapper>
+    <FullscreenWrapper onReset={reset}>
       <View style={styles.root}>
         <SafeAreaView style={styles.safe}>
           <LinearGradient
@@ -376,7 +485,7 @@ export default function BalloonPopper() {
               left={<BackButton />}
               centerLabel="Score:"
               centerValue={score}
-              onPressSettings={() => setSettingsOpen(true)}
+              onPressSettings={openSettings}
             />
           </View>
 
@@ -386,10 +495,7 @@ export default function BalloonPopper() {
               <Image
                 key={c.id}
                 source={src}
-                style={[
-                  styles.cloud,
-                  { left: c.x, top: c.y, transform: [{ scale: c.scale }] },
-                ]}
+                style={[styles.cloud, { left: c.x, top: c.y, transform: [{ scale: c.scale }] }]}
                 resizeMode="contain"
               />
             );
@@ -407,12 +513,8 @@ export default function BalloonPopper() {
             }}
           >
             <GestureDetector gesture={swipeGesture}>
-              <Pressable
-                style={StyleSheet.absoluteFill}
-                onPressIn={handleTap}
-                android_disableSound={true}
-              >
-                {/* B2: Pop Puff overlay (non-interactive) */}
+              <Pressable style={StyleSheet.absoluteFill} onPressIn={handleTap} android_disableSound={true}>
+                {/* B2: Pop Puff overlay */}
                 <View style={StyleSheet.absoluteFill} pointerEvents="none">
                   {puffs.map((p) => {
                     const left = p.x - p.size / 2;
@@ -461,14 +563,6 @@ export default function BalloonPopper() {
               </Pressable>
             </GestureDetector>
           </View>
-
-          <SettingsModal
-            visible={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
-            onReset={reset}
-            soundOn={soundOn}
-            setSoundOn={setSoundOn}
-          />
         </SafeAreaView>
       </View>
     </FullscreenWrapper>
@@ -495,7 +589,6 @@ const styles = StyleSheet.create({
   },
   balloon: { position: "absolute" },
 
-  // B2 Puff ring (simple + lightweight)
   puff: {
     position: "absolute",
     borderRadius: 999,

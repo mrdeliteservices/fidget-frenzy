@@ -1,10 +1,9 @@
 // app/screens/spinner.tsx
-// Fidget Frenzy – Spinner (v0.8-dev behavior, updated asset name)
-// Physics & interaction logic preserved exactly; audio mapped to whoosh-1.mp3
-// Premium pass: visual/material polish only (no mechanic changes, no new deps)
-// + Option A: subtle world spotlight + vignette (reduces “dark void”)
+// Fidget Frenzy – Spinner
+// Physics & interaction logic preserved; audio respects GLOBAL sound toggle
+// Expo SDK 54 / RN 0.81
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { View, StyleSheet } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -20,9 +19,10 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import BackButton from "../../components/BackButton";
-import FullscreenWrapper from "../../components/FullscreenWrapper";
-import SettingsModal from "../../components/SettingsModal";
+import FullscreenWrapper, { useSettingsUI } from "../../components/FullscreenWrapper";
 import GameHeader from "../../components/GameHeader";
+import { GlobalSoundManager } from "../../lib/soundManager";
+import { APP_IDENTITY } from "../../constants/appIdentity";
 
 // ---------- Config ----------
 const CONFIG = {
@@ -38,28 +38,31 @@ const CONFIG = {
   OMEGA_STOP: 15,
 };
 
-export default function Spinner() {
+type SpinnerInnerProps = {
+  // Allows outer wrapper to trigger the real in-game reset
+  setResetHandler: (fn: () => void) => void;
+};
+
+function SpinnerInner({ setResetHandler }: SpinnerInnerProps) {
   const insets = useSafeAreaInsets();
+  const { soundOn, openSettings } = useSettingsUI();
 
   // motion state
-  const angle = useSharedValue(0); // total rotation (deg), continuous/unbounded
-  const omega = useSharedValue(0); // angular velocity (deg/s)
-  const lastCountAt = useSharedValue(0); // last angle at which we incremented count (deg)
+  const angle = useSharedValue(0);
+  const omega = useSharedValue(0);
+  const lastCountAt = useSharedValue(0);
   const centerX = useSharedValue(0);
   const centerY = useSharedValue(0);
-  const dragStartRotation = useSharedValue(0); // angle at drag begin
+  const dragStartRotation = useSharedValue(0);
   const isDragging = useSharedValue(false);
 
-  // unwrap support for dragging
-  const prevDragAngle = useSharedValue(0); // previous raw atan2 (rad)
-  const cumulativeDragDelta = useSharedValue(0); // accumulated drag delta (deg, continuous)
+  const prevDragAngle = useSharedValue(0);
+  const cumulativeDragDelta = useSharedValue(0);
 
   const bodyRef = useRef<View>(null);
 
   // React state
   const [spinCount, setSpinCount] = useState(0);
-  const [soundOn, setSoundOn] = useState(true);
-  const [settingsVisible, setSettingsVisible] = useState(false);
 
   // mounted guard
   const mountedRef = useRef(true);
@@ -70,25 +73,42 @@ export default function Spinner() {
     };
   }, []);
 
+  // ---------- Counter ----------
+  const incrementSpinCount = () => {
+    if (mountedRef.current) setSpinCount((p) => p + 1);
+  };
+
+  const resetSpinCount = useCallback(() => {
+    if (mountedRef.current) setSpinCount(0);
+  }, []);
+
+  // ✅ Register the REAL reset with the wrapper (so global modal can call it)
+  useEffect(() => {
+    // IMPORTANT: pass the function itself (not a function that returns a function)
+    setResetHandler(resetSpinCount);
+  }, [setResetHandler, resetSpinCount]);
+
   // ---------- Sound ----------
   const whooshRef = useRef<Audio.Sound | null>(null);
   const whooshPlaying = useRef(false);
 
   useEffect(() => {
     let cancelled = false;
+
     (async () => {
       try {
         const { sound } = await Audio.Sound.createAsync(
           require("../../assets/sounds/whoosh-1.mp3"),
           { isLooping: false, volume: 1.0 }
         );
+
         if (!cancelled) {
           whooshRef.current = sound;
         } else {
           await sound.unloadAsync();
         }
       } catch {
-        // silent fail
+        // silent
       }
     })();
 
@@ -99,8 +119,30 @@ export default function Spinner() {
     };
   }, []);
 
+  const stopSound = async () => {
+    const snd = whooshRef.current;
+    if (!snd) return;
+
+    try {
+      await snd.stopAsync();
+      await snd.setPositionAsync(0);
+      snd.setOnPlaybackStatusUpdate(null);
+    } catch {}
+
+    whooshPlaying.current = false;
+  };
+
+  // If global sound is turned OFF while spinner is open, stop immediately
+  useEffect(() => {
+    if (!soundOn) {
+      stopSound().catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soundOn]);
+
   const playWhoosh = async () => {
     if (!mountedRef.current || !soundOn) return;
+
     const snd = whooshRef.current;
     if (!snd || whooshPlaying.current) return;
 
@@ -116,21 +158,11 @@ export default function Spinner() {
           snd.setOnPlaybackStatusUpdate(null);
         }
       });
+
       await snd.playFromPositionAsync(0);
     } catch {
       whooshPlaying.current = false;
     }
-  };
-
-  const stopSound = async () => {
-    const snd = whooshRef.current;
-    if (!snd) return;
-    try {
-      await snd.stopAsync();
-      await snd.setPositionAsync(0);
-      snd.setOnPlaybackStatusUpdate(null);
-    } catch {}
-    whooshPlaying.current = false;
   };
 
   const triggerHaptic = () => {
@@ -145,14 +177,6 @@ export default function Spinner() {
         centerY.value = y + h / 2;
       });
     }, 0);
-  };
-
-  // ---------- Counter ----------
-  const incrementSpinCount = () => {
-    if (mountedRef.current) setSpinCount((p) => p + 1);
-  };
-  const resetSpinCount = () => {
-    if (mountedRef.current) setSpinCount(0);
   };
 
   // ---------- Frame Loop ----------
@@ -172,7 +196,6 @@ export default function Spinner() {
       }
     }
 
-    // Count every full 360° rotation (CW or CCW)
     const deltaSinceCount = Math.abs(angle.value - lastCountAt.value);
     if (deltaSinceCount >= 360) {
       lastCountAt.value = angle.value;
@@ -247,7 +270,6 @@ export default function Spinner() {
 
   const ArmGroup = ({ angle: armAngle }: { angle: string }) => (
     <View style={[styles.armGroup, { transform: [{ rotate: armAngle }] }]}>
-      {/* Arm: brushed metal with a clean sheen + subtle edge */}
       <LinearGradient
         colors={["#101318", "#6b7280", "#e5e7eb", "#4b5563", "#0f172a"]}
         start={{ x: 0, y: 0 }}
@@ -261,9 +283,7 @@ export default function Spinner() {
           },
         ]}
       >
-        {/* Inner shadow strip to give “machined” depth */}
         <View style={styles.armInnerShadow} pointerEvents="none" />
-        {/* Pinch / cutout reads as inset */}
         <View
           style={[
             styles.pinch,
@@ -273,7 +293,6 @@ export default function Spinner() {
         <View style={styles.pinchEdge} pointerEvents="none" />
       </LinearGradient>
 
-      {/* Weight: rim + inner face */}
       <LinearGradient
         colors={["#0b0f16", "#a3aab6", "#eef2f7", "#6b7280", "#0b0f16"]}
         start={{ x: 0.2, y: 0.1 }}
@@ -310,124 +329,121 @@ export default function Spinner() {
   );
 
   return (
-    <FullscreenWrapper>
-      <View style={styles.root}>
-        {/* BACKGROUND DEPTH (no new deps): stacked gradients */}
-        <LinearGradient
-          colors={["#0a1326", "#0b1220"]}
-          start={{ x: 0.5, y: 0 }}
-          end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <LinearGradient
-          colors={["rgba(255,255,255,0.06)", "rgba(255,255,255,0)"]}
-          start={{ x: 0.15, y: 0.1 }}
-          end={{ x: 0.6, y: 0.8 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <LinearGradient
-          colors={["rgba(59,130,246,0.08)", "rgba(59,130,246,0)"]}
-          start={{ x: 0.9, y: 0.0 }}
-          end={{ x: 0.3, y: 0.8 }}
-          style={StyleSheet.absoluteFill}
-        />
+    <View style={styles.root}>
+      <LinearGradient
+        colors={["#0a1326", "#0b1220"]}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={["rgba(255,255,255,0.06)", "rgba(255,255,255,0)"]}
+        start={{ x: 0.15, y: 0.1 }}
+        end={{ x: 0.6, y: 0.8 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={["rgba(59,130,246,0.08)", "rgba(59,130,246,0)"]}
+        start={{ x: 0.9, y: 0.0 }}
+        end={{ x: 0.3, y: 0.8 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={["rgba(255,255,255,0.08)", "rgba(255,255,255,0)"]}
+        start={{ x: 0.5, y: 0.45 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
+      <LinearGradient
+        colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.35)"]}
+        start={{ x: 0.5, y: 0.2 }}
+        end={{ x: 0.5, y: 1 }}
+        style={StyleSheet.absoluteFill}
+      />
 
-        {/* ✅ Option A: WORLD SPOTLIGHT + VIGNETTE (minor change only) */}
-        <LinearGradient
-          colors={["rgba(255,255,255,0.08)", "rgba(255,255,255,0)"]}
-          start={{ x: 0.5, y: 0.45 }}
-          end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-        <LinearGradient
-          colors={["rgba(0,0,0,0)", "rgba(0,0,0,0.35)"]}
-          start={{ x: 0.5, y: 0.2 }}
-          end={{ x: 0.5, y: 1 }}
-          style={StyleSheet.absoluteFill}
-        />
-
-        {/* HEADER (safe-area aware, no magic numbers) */}
-        <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
-          <GameHeader
-            left={<BackButton />}
-            centerLabel="Spins:"
-            centerValue={spinCount}
-            onPressSettings={() => setSettingsVisible(true)}
-          />
-        </View>
-
-        {/* CONTENT: centered below the header */}
-        <View style={styles.content}>
-          {/* subtle stage ring behind spinner */}
-          <View style={styles.stageRing} pointerEvents="none" />
-          <View style={styles.stageRingInner} pointerEvents="none" />
-
-          <GestureDetector gesture={pan}>
-            <Animated.View
-              ref={bodyRef}
-              onLayout={onBodyLayout}
-              style={[styles.spinnerBody, animatedStyle]}
-            >
-              {/* HUB: machined brass */}
-              <LinearGradient
-                colors={["#2b1a08", "#f59e0b", "#8a4b10"]}
-                start={{ x: 0.1, y: 0.1 }}
-                end={{ x: 1, y: 1 }}
-                style={[
-                  styles.hub,
-                  {
-                    width: CONFIG.HUB_DIAMETER,
-                    height: CONFIG.HUB_DIAMETER,
-                    borderRadius: CONFIG.HUB_DIAMETER / 2,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  },
-                ]}
-              >
-                <LinearGradient
-                  colors={["#ffd36a", "#d97706", "#7c2d12"]}
-                  start={{ x: 0.2, y: 0.2 }}
-                  end={{ x: 1, y: 1 }}
-                  style={{
-                    width: CONFIG.HUB_DIAMETER * 0.78,
-                    height: CONFIG.HUB_DIAMETER * 0.78,
-                    borderRadius: (CONFIG.HUB_DIAMETER * 0.78) / 2,
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                  {/* inner cap */}
-                  <View style={styles.hubCap} />
-                </LinearGradient>
-
-                {/* spec highlight */}
-                <View style={styles.hubSpec} pointerEvents="none" />
-              </LinearGradient>
-
-              <ArmGroup angle="0deg" />
-              <ArmGroup angle="120deg" />
-              <ArmGroup angle="240deg" />
-            </Animated.View>
-          </GestureDetector>
-        </View>
-
-        <SettingsModal
-          visible={settingsVisible}
-          onClose={() => setSettingsVisible(false)}
-          onReset={resetSpinCount}
-          soundOn={soundOn}
-          setSoundOn={setSoundOn}
+      <View style={[styles.headerWrap, { paddingTop: insets.top + 8 }]}>
+        <GameHeader
+          left={<BackButton />}
+          centerLabel="Spins:"
+          centerValue={spinCount}
+          onPressSettings={openSettings}
         />
       </View>
+
+      <View style={styles.content}>
+        <View style={styles.stageRing} pointerEvents="none" />
+        <View style={styles.stageRingInner} pointerEvents="none" />
+
+        <GestureDetector gesture={pan}>
+          <Animated.View
+            ref={bodyRef}
+            onLayout={onBodyLayout}
+            style={[styles.spinnerBody, animatedStyle]}
+          >
+            <LinearGradient
+              colors={["#2b1a08", "#f59e0b", "#8a4b10"]}
+              start={{ x: 0.1, y: 0.1 }}
+              end={{ x: 1, y: 1 }}
+              style={[
+                styles.hub,
+                {
+                  width: CONFIG.HUB_DIAMETER,
+                  height: CONFIG.HUB_DIAMETER,
+                  borderRadius: CONFIG.HUB_DIAMETER / 2,
+                  justifyContent: "center",
+                  alignItems: "center",
+                },
+              ]}
+            >
+              <LinearGradient
+                colors={["#ffd36a", "#d97706", "#7c2d12"]}
+                start={{ x: 0.2, y: 0.2 }}
+                end={{ x: 1, y: 1 }}
+                style={{
+                  width: CONFIG.HUB_DIAMETER * 0.78,
+                  height: CONFIG.HUB_DIAMETER * 0.78,
+                  borderRadius: (CONFIG.HUB_DIAMETER * 0.78) / 2,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <View style={styles.hubCap} />
+              </LinearGradient>
+
+              <View style={styles.hubSpec} pointerEvents="none" />
+            </LinearGradient>
+
+            <ArmGroup angle="0deg" />
+            <ArmGroup angle="120deg" />
+            <ArmGroup angle="240deg" />
+          </Animated.View>
+        </GestureDetector>
+      </View>
+    </View>
+  );
+}
+
+export default function Spinner() {
+  const resetRef = useRef<() => void>(() => {});
+
+  const setResetHandler = useCallback((fn: () => void) => {
+    resetRef.current = fn;
+  }, []);
+
+  const handleReset = useCallback(() => {
+    resetRef.current?.();
+    GlobalSoundManager.stopAll().catch(() => {});
+  }, []);
+
+  return (
+    <FullscreenWrapper appName={APP_IDENTITY.displayName} onReset={handleReset}>
+      <SpinnerInner setResetHandler={setResetHandler} />
     </FullscreenWrapper>
   );
 }
 
 const styles = StyleSheet.create({
-  root: {
-    flex: 1,
-    backgroundColor: "#0b1220",
-  },
+  root: { flex: 1, backgroundColor: "#0b1220" },
 
   headerWrap: {
     paddingHorizontal: 12,
@@ -435,11 +451,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
   },
 
-  content: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-  },
+  content: { flex: 1, justifyContent: "center", alignItems: "center" },
 
   spinnerBody: {
     width: 320,
@@ -448,7 +460,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  // Stage rings behind spinner to make it feel “mounted”
   stageRing: {
     position: "absolute",
     width: 308,
@@ -468,7 +479,6 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(255,255,255,0.02)",
   },
 
-  // Hub
   hub: {
     zIndex: 3,
     borderWidth: 2,

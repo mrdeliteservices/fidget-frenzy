@@ -13,7 +13,11 @@ import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 
-const { width: W, height: H } = Dimensions.get("window");
+import FullscreenWrapper, { useSettingsUI } from "../components/FullscreenWrapper";
+import { BRAND_ATTRIBUTION_LINES } from "../constants/branding";
+import { APP_IDENTITY } from "../constants/appIdentity";
+
+const { width: W } = Dimensions.get("window");
 
 const TAP_SOUND = require("../assets/sounds/switch-click.mp3");
 
@@ -24,14 +28,12 @@ const TAGLINES = [
   "Because everyone needs a little Frenzy",
 ];
 
-const SUBLINE = "Created by MRD Elite Services";
-
-// ✅ Option A: Reserve a fixed height for headline area so layout never re-centers
-// Tune once, then it stays stable across all taglines/devices.
 const HEADLINE_SLOT_HEIGHT = 72;
 
-export default function Welcome() {
+function WelcomeInner() {
   const router = useRouter();
+  const { soundOn } = useSettingsUI(); // ✅ keep sound toggle behavior, no settings icon here
+
   const [index, setIndex] = useState(0);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(20)).current;
@@ -40,14 +42,16 @@ export default function Welcome() {
   // 🔊 preload sound
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         const { sound } = await Audio.Sound.createAsync(TAP_SOUND);
         if (mounted) soundRef.current = sound;
-      } catch (err) {
-        console.warn("Sound load error:", err);
+      } catch {
+        // silent
       }
     })();
+
     return () => {
       mounted = false;
       if (soundRef.current) soundRef.current.unloadAsync();
@@ -59,6 +63,7 @@ export default function Welcome() {
     const animate = () => {
       fadeAnim.setValue(0);
       translateY.setValue(20);
+
       Animated.parallel([
         Animated.timing(fadeAnim, {
           toValue: 1,
@@ -71,7 +76,6 @@ export default function Welcome() {
           useNativeDriver: true,
         }),
       ]).start(() => {
-        // hold then fade out
         setTimeout(() => {
           Animated.timing(fadeAnim, {
             toValue: 0,
@@ -87,22 +91,25 @@ export default function Welcome() {
         }, 1200);
       });
     };
+
     animate();
   }, [index, fadeAnim, translateY, router]);
 
   const handlePress = useCallback(async () => {
     try {
       await Haptics.selectionAsync();
-      if (soundRef.current) await soundRef.current.replayAsync();
-    } catch (err) {
-      console.warn("Play sound error:", err);
+      if (soundOn && soundRef.current) {
+        await soundRef.current.replayAsync();
+      }
+    } catch {
+      // silent
     }
+
     router.replace("/home");
-  }, [router]);
+  }, [router, soundOn]);
 
   return (
     <Pressable style={styles.container} onPress={handlePress}>
-      {/* Lighter “world” gradient so logo pops */}
       <LinearGradient
         colors={["#7BC6FF", "#1E4F86", "#081A34"]}
         start={{ x: 0.15, y: 0 }}
@@ -110,10 +117,9 @@ export default function Welcome() {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Subtle glow behind logo (keeps it from getting lost) */}
       <View style={styles.logoGlow} pointerEvents="none" />
 
-      <View style={styles.center}>
+      <View style={styles.center} pointerEvents="none">
         <View style={styles.logoWrap}>
           <Image
             source={require("../assets/logo.png")}
@@ -131,21 +137,33 @@ export default function Welcome() {
             },
           ]}
         >
-          {/* ✅ Fixed-height slot prevents the logo from shifting when tagline wraps */}
           <View style={styles.headlineSlot}>
             <Text style={styles.tagline} numberOfLines={2}>
               {TAGLINES[index]}
             </Text>
           </View>
 
-          {/* De-emphasized (trust-building, not shouting) */}
-          <Text style={styles.subline}>{SUBLINE}</Text>
+          <Text style={styles.subline}>{BRAND_ATTRIBUTION_LINES.join("\n")}</Text>
         </Animated.View>
 
-        {/* (Optional) tiny “tap to start” vibe without adding clutter */}
         <Text style={styles.hint}>Tap anywhere</Text>
       </View>
     </Pressable>
+  );
+}
+
+export default function Welcome() {
+  // When user hits Reset in Settings from Welcome, restart tagline cycle
+  const [resetTick, setResetTick] = useState(0);
+
+  const handleReset = useCallback(() => {
+    setResetTick((v) => v + 1);
+  }, []);
+
+  return (
+    <FullscreenWrapper appName={APP_IDENTITY.displayName} onReset={handleReset}>
+      <WelcomeInner key={resetTick} />
+    </FullscreenWrapper>
   );
 }
 
@@ -192,7 +210,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
 
-  // ✅ The reserved “slot” for headline height
   headlineSlot: {
     height: HEADLINE_SLOT_HEIGHT,
     justifyContent: "center",
@@ -216,6 +233,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 6,
     letterSpacing: 0.2,
+    lineHeight: 18,
   },
 
   hint: {
