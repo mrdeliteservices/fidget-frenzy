@@ -1,5 +1,5 @@
 // lib/soundManager.ts
-// Fidget Frenzy — Global Sound Manager (v0.9-dev CLEAN)
+// Frenzy Apps — Global Sound Manager (v0.9-dev CLEAN)
 // Expo SDK 54 — silent preload, safe playback, no console logs
 // Shared across ALL mini-games
 
@@ -12,7 +12,27 @@ import { Audio, AVPlaybackSource, AVPlaybackStatus } from "expo-av";
 class SoundManager {
   private readonly active = new Map<string, Audio.Sound>();
 
-  /** ---------- NEW: status helpers (no refactor required) ---------- */
+  // ✅ global enable/disable
+  private enabled = true;
+
+  /** Enable/disable all sound globally for the app */
+  async setEnabled(v: boolean) {
+    this.enabled = v;
+
+    // ✅ IMPORTANT:
+    // When disabling, DO NOT call expo-av stop/unload calls.
+    // expo-av can throw "audio is not enabled" during shutdown / mode transitions,
+    // causing uncaught promise crashes.
+    if (!v) {
+      // Just forget active handles; future play() calls are blocked by enabled flag.
+      this.active.clear();
+    }
+  }
+
+  /** Returns current sound enable state */
+  isEnabled() {
+    return this.enabled;
+  }
 
   /** Returns true if the sound exists, is loaded, and is currently playing */
   async isPlaying(id: string): Promise<boolean> {
@@ -27,7 +47,7 @@ class SoundManager {
     }
   }
 
-  /** Pause without unloading (useful for “engine running” style audio) */
+  /** Pause without unloading */
   async pause(id: string) {
     const sound = this.active.get(id);
     if (!sound) return;
@@ -54,10 +74,7 @@ class SoundManager {
     }
   }
 
-  /**
-   * Fade out a sound over durationMs, then stop+unload it.
-   * Useful for making engine audio feel natural when slowing down.
-   */
+  /** Fade out then stop+unload (safe) */
   async fadeOutAndStop(id: string, durationMs: number = 450, steps: number = 10) {
     const sound = this.active.get(id);
     if (!sound) return;
@@ -69,8 +86,7 @@ class SoundManager {
         return;
       }
 
-      const startVol =
-        typeof status.volume === "number" ? status.volume : 1.0;
+      const startVol = typeof status.volume === "number" ? status.volume : 1.0;
 
       const safeSteps = Math.max(3, Math.min(30, steps));
       const stepMs = Math.max(10, Math.floor(durationMs / safeSteps));
@@ -88,36 +104,28 @@ class SoundManager {
       // silent
     }
 
-    // Always finish with a real stop/unload to prevent lingering audio resources.
     await this.stop(id);
   }
 
-  /**
-   * Play a loop WITHOUT restarting if it already exists.
-   * - If already playing: do nothing
-   * - If loaded but paused/stopped: resume
-   * - If not created yet: create and start
-   *
-   * This is the key fix for Odometer engine audio.
-   */
+  /** Play a loop WITHOUT restarting if it already exists */
   async playLoopPersistent(id: string, src: AVPlaybackSource, volume: number = 1.0) {
+    if (!this.enabled) return;
+
     try {
       const existing = this.active.get(id);
 
       if (existing) {
         const status = await existing.getStatusAsync();
         if (status.isLoaded) {
-          // ensure looping + volume, then resume if needed
           await existing.setStatusAsync({ isLooping: true, volume });
 
           if (!status.isPlaying) {
             await existing.playAsync();
           }
-          return; // IMPORTANT: no restart
+          return;
         }
       }
 
-      // If no existing sound OR it wasn't loaded, create fresh
       const { sound } = await Audio.Sound.createAsync(src, {
         shouldPlay: true,
         isLooping: true,
@@ -126,21 +134,20 @@ class SoundManager {
 
       this.active.set(id, sound);
 
-      // For loops, we intentionally do NOT untrack on finish (loops "finish" only on stop/unload)
       sound.setOnPlaybackStatusUpdate((_status: AVPlaybackStatus) => {
         // silent
       });
     } catch {
-      // silent fail — no logs
+      // silent
     }
   }
 
-  /** ---------- EXISTING API (unchanged behavior) ---------- */
-
-  /** Play a sound effect or loop (ALWAYS restarts because it stop()s first) */
+  /** Play a sound effect or loop */
   async play(id: string, src: AVPlaybackSource, loop: boolean = false) {
+    if (!this.enabled) return;
+
     try {
-      await this.stop(id); // ensure no duplicates (restarts sound)
+      await this.stop(id);
 
       const { sound } = await Audio.Sound.createAsync(src, {
         shouldPlay: true,
@@ -156,17 +163,22 @@ class SoundManager {
         }
       });
     } catch {
-      // silent fail — no logs
+      // silent
     }
   }
 
-  /** Stop and unload a specific sound */
+  /** Stop and unload a specific sound (safe even if AV is disabled) */
   async stop(id: string) {
     const sound = this.active.get(id);
     if (!sound) return;
 
     try {
       await sound.stopAsync();
+    } catch {
+      // silent (covers "audio is not enabled")
+    }
+
+    try {
       await sound.unloadAsync();
     } catch {
       // silent
@@ -175,56 +187,60 @@ class SoundManager {
     this.untrack(id);
   }
 
-  /** Stop and unload ALL sounds */
+  /** Stop and unload ALL sounds (safe even if AV is disabled) */
   async stopAll() {
     const tasks = Array.from(this.active.entries()).map(async ([id, sound]) => {
       try {
         await sound.stopAsync();
+      } catch {
+        // silent
+      }
+
+      try {
         await sound.unloadAsync();
       } catch {
         // silent
       }
+
       this.untrack(id);
     });
 
     await Promise.all(tasks);
   }
 
-  /** Remove from active map */
   private untrack(id: string) {
     this.active.delete(id);
   }
 }
 
-/** Shared singleton instance */
 export const GlobalSoundManager = new SoundManager();
 
-/** Simple helper for quick playback (unchanged) */
+export const setSoundEnabled = async (enabled: boolean) =>
+  GlobalSoundManager.setEnabled(enabled);
+
+export const isSoundEnabled = () => GlobalSoundManager.isEnabled();
+
 export const playSound = async (
   id: string,
   src: AVPlaybackSource,
   loop: boolean = false
 ) => GlobalSoundManager.play(id, src, loop);
 
-/** NEW helper for persistent loop playback */
 export const playLoopPersistent = async (
   id: string,
   src: AVPlaybackSource,
   volume: number = 1.0
 ) => GlobalSoundManager.playLoopPersistent(id, src, volume);
 
-/** NEW helper: fade out and stop */
 export const fadeOutAndStop = async (
   id: string,
   durationMs: number = 450,
   steps: number = 10
 ) => GlobalSoundManager.fadeOutAndStop(id, durationMs, steps);
 
-/** NEW helper: set volume */
 export const setSoundVolume = async (id: string, volume: number) =>
   GlobalSoundManager.setVolume(id, volume);
 
-/** Silent preload — no logs EVER */
 export const preloadSounds = async (sounds: Record<string, AVPlaybackSource>) => {
   const tasks = Object.entries(sounds).map(async ([_, src]) => {
     try {
@@ -232,7 +248,6 @@ export const preloadSounds = async (sounds: Record<string, AVPlaybackSource>) =>
         shouldPlay: false,
       });
 
-      // Immediately unload — we want preload in memory, not active
       await sound.unloadAsync();
     } catch {
       // silent
