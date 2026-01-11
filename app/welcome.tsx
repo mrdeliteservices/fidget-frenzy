@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useCallback, useState } from "react";
+import React, { useRef, useEffect, useCallback, useState, useMemo } from "react";
 import {
   View,
   Text,
@@ -30,14 +30,45 @@ const TAGLINES = [
 
 const HEADLINE_SLOT_HEIGHT = 72;
 
+// Motion tuning (premium, not cartoon)
+const IN_DURATION = 850;
+const OUT_DURATION = 450;
+const HOLD_MS = 1200;
+
+// Per-line entrance "from" states
+function getFromState(i: number) {
+  // Keep values subtle. Big moves feel cheap fast.
+  switch (i) {
+    case 0: // from right
+      return { x: Math.round(W * 0.28), y: 0, scale: 1 };
+    case 1: // from distant background (depth)
+      return { x: 0, y: 10, scale: 0.72 };
+    case 2: // from left
+      return { x: -Math.round(W * 0.28), y: 0, scale: 1 };
+    case 3: // from bottom
+      return { x: 0, y: 44, scale: 1 };
+    default:
+      return { x: 0, y: 20, scale: 1 };
+  }
+}
+
 function WelcomeInner() {
   const router = useRouter();
   const { soundOn } = useSettingsUI(); // ✅ keep sound toggle behavior, no settings icon here
 
   const [index, setIndex] = useState(0);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const translateY = useRef(new Animated.Value(20)).current;
+
+  // Animated values
+  const opacity = useRef(new Animated.Value(0)).current;
+  const translateX = useRef(new Animated.Value(0)).current;
+  const translateY = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(1)).current;
+
   const soundRef = useRef<Audio.Sound | null>(null);
+
+  const isLast = index === TAGLINES.length - 1;
+
+  const attributionText = useMemo(() => BRAND_ATTRIBUTION_LINES.join("\n"), []);
 
   // 🔊 preload sound
   useEffect(() => {
@@ -58,42 +89,72 @@ function WelcomeInner() {
     };
   }, []);
 
-  // ✨ tagline animation sequence
+  // ✨ tagline animation sequence (per-line entrance)
   useEffect(() => {
-    const animate = () => {
-      fadeAnim.setValue(0);
-      translateY.setValue(20);
+    const from = getFromState(index);
 
-      Animated.parallel([
-        Animated.timing(fadeAnim, {
-          toValue: 1,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-        Animated.timing(translateY, {
-          toValue: 0,
-          duration: 800,
-          useNativeDriver: true,
-        }),
-      ]).start(() => {
-        setTimeout(() => {
-          Animated.timing(fadeAnim, {
-            toValue: 0,
-            duration: 600,
-            useNativeDriver: true,
-          }).start(() => {
-            if (index < TAGLINES.length - 1) {
-              setIndex((prev) => prev + 1);
-            } else {
-              router.replace("/home");
-            }
-          });
-        }, 1200);
-      });
+    // Reset to the correct "from" state
+    opacity.setValue(0);
+    translateX.setValue(from.x);
+    translateY.setValue(from.y);
+    scale.setValue(from.scale);
+
+    const animateIn = Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: IN_DURATION,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateX, {
+        toValue: 0,
+        duration: IN_DURATION,
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: IN_DURATION,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: IN_DURATION,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    const animateOut = Animated.timing(opacity, {
+      toValue: 0,
+      duration: OUT_DURATION,
+      useNativeDriver: true,
+    });
+
+    const inHandle = animateIn.start(() => {
+      const holdId = setTimeout(() => {
+        animateOut.start(() => {
+          if (index < TAGLINES.length - 1) {
+            setIndex((prev) => prev + 1);
+          } else {
+            router.replace("/home");
+          }
+        });
+      }, HOLD_MS);
+
+      // Cleanup for hold timeout
+      return () => clearTimeout(holdId);
+    });
+
+    return () => {
+      // Stop any in-flight animation when index changes/unmounts
+      opacity.stopAnimation();
+      translateX.stopAnimation();
+      translateY.stopAnimation();
+      scale.stopAnimation();
+
+      // inHandle is not reliably cancellable across platforms, but stopAnimation above is.
+      // (No-op return)
+      void inHandle;
     };
-
-    animate();
-  }, [index, fadeAnim, translateY, router]);
+  }, [index, opacity, translateX, translateY, scale, router]);
 
   const handlePress = useCallback(async () => {
     try {
@@ -132,8 +193,8 @@ function WelcomeInner() {
           style={[
             styles.taglineWrap,
             {
-              opacity: fadeAnim,
-              transform: [{ translateY }],
+              opacity,
+              transform: [{ translateX }, { translateY }, { scale }],
             },
           ]}
         >
@@ -143,7 +204,16 @@ function WelcomeInner() {
             </Text>
           </View>
 
-          <Text style={styles.subline}>{BRAND_ATTRIBUTION_LINES.join("\n")}</Text>
+          {/* Attribution: only screen 4. Slot is reserved so layout doesn't jump. */}
+          <View style={styles.attributionSlot}>
+            {isLast ? (
+              <Text style={styles.subline}>{attributionText}</Text>
+            ) : (
+              <Text style={[styles.subline, styles.sublineHidden]}>
+                {attributionText}
+              </Text>
+            )}
+          </View>
         </Animated.View>
 
         <Text style={styles.hint}>Tap anywhere</Text>
@@ -226,14 +296,24 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 8,
   },
+
+  attributionSlot: {
+    marginTop: 6,
+    minHeight: 40, // reserve space so the UI doesn't shift when attribution appears
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
   subline: {
     color: "rgba(253,208,23,0.65)",
     fontSize: 14,
     fontWeight: "700",
     textAlign: "center",
-    marginTop: 6,
     letterSpacing: 0.2,
     lineHeight: 18,
+  },
+  sublineHidden: {
+    opacity: 0, // reserve layout without visual clutter
   },
 
   hint: {
