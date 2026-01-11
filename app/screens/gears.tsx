@@ -1,22 +1,11 @@
 // app/screens/gears.tsx
 // Fidget Frenzy — Gears (v0.9-dev)
-// ✅ Header standardized via GameHeader (Back + Power + Settings)
-// ✅ Wind/unwind preserved (NO modulo/clamp; extrapolate extend)
-// ✅ Only winding/unwinding audio (no click)
-// ✅ Random gear network each mount + reset (safe layout, meshes correctly)
-// ✅ More top density: repeat small gears + stronger upward placement bias
-// ✅ Phase 2: Prevent multi-contact (single authority parent per follower)
-// ✅ UI PASS: Stage backlight/glow to fix dark-on-dark visibility (no physics changes)
-// ✅ FIX: Stop winding loop when drag motion pauses (prevents “sound continues” bug)
-// ✅ Stage standardized via PremiumStage (Gears keeps shine ON)
 //
-// ✅ TODAY FIX:
-// - Move drag rotation to Reanimated UI thread (eliminates jitter in Expo Go)
-// - Keep hold-to-reverse but allow drag immediately after hold
-// - Keep audio loops + idle stop behavior
-// ✅ CRASH FIX:
-// - No non-worklet helpers called from worklets (worklet-safe clamp)
-// - Capture restTurns on touch begin so unwind has a sane target
+// ✅ MIGRATION (Shell-standard):
+// - Uses useSettingsUI() (no local SettingsModal)
+// - Sound toggle persists globally
+// - Audio loops stop immediately when sound disabled
+// - Cleanup stops/unloads audio on unmount
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -40,9 +29,11 @@ import Animated, {
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
-import SettingsModal from "../../components/SettingsModal";
 import GameHeader from "../../components/GameHeader";
 import PremiumStage from "../../components/PremiumStage";
+
+// ✅ Shell-standard Settings hook
+import { useSettingsUI } from "../../components/SettingsUIProvider";
 
 type SoundKey = "winding" | "unwinding";
 type Mode = "idle" | "dragging" | "unwinding";
@@ -140,6 +131,14 @@ function FollowerGear({
 }
 
 export default function Gears() {
+  // ✅ Shell settings (matches your naming style)
+  const { soundOn, openSettings } = useSettingsUI();
+  const soundOnRef = useRef(soundOn);
+
+  useEffect(() => {
+    soundOnRef.current = soundOn;
+  }, [soundOn]);
+
   const [mode, setMode] = useState<Mode>("idle");
   const modeRef = useRef<Mode>("idle");
 
@@ -166,9 +165,6 @@ export default function Gears() {
 
   // React UI state
   const [power, setPower] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [soundOn, setSoundOn] = useState(true);
-  const soundOnRef = useRef(true);
 
   // Timers (JS)
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,10 +174,6 @@ export default function Gears() {
     modeRef.current = next;
     setMode(next);
   }, []);
-
-  useEffect(() => {
-    soundOnRef.current = soundOn;
-  }, [soundOn]);
 
   // ---- Audio ----
   const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
@@ -222,6 +214,11 @@ export default function Gears() {
     void safeStop("winding");
     void safeStop("unwinding");
   }, [safeStop]);
+
+  // ✅ If sound gets disabled while we’re mid-loop, slam-stop immediately
+  useEffect(() => {
+    if (!soundOn) stopAllAudio();
+  }, [soundOn, stopAllAudio]);
 
   // ---- Audio load/unload ----
   useEffect(() => {
@@ -334,7 +331,6 @@ export default function Gears() {
   const driverCenterY = stageSize.h > 0 ? stageSize.h - DRIVER_BOTTOM_PAD_PX : 0;
 
   const measureDriverCenter = useCallback(() => {
-    // measureInWindow gives screen coords (what gesture absoluteX/Y uses)
     setTimeout(() => {
       driverRef.current?.measureInWindow((x, y, w, h) => {
         centerX.value = x + w / 2;
@@ -392,13 +388,18 @@ export default function Gears() {
 
       const margin = 18;
       const biteBase = 7;
-
       const MULTI_CONTACT_TOLERANCE_PX = 6;
 
       const withinBounds = (cx: number, cy: number, r: number) =>
         cx - r >= margin && cx + r <= w - margin && cy - r >= margin && cy + r <= h - margin;
 
-      const violatesSingleContact = (cx: number, cy: number, rNew: number, parentId: string, existing: PlacedGear[]) => {
+      const violatesSingleContact = (
+        cx: number,
+        cy: number,
+        rNew: number,
+        parentId: string,
+        existing: PlacedGear[]
+      ) => {
         for (const g of existing) {
           if (g.id === parentId) continue;
           const r2 = g.size / 2;
@@ -449,7 +450,9 @@ export default function Gears() {
 
         for (let t = 0; t < 220; t++) {
           const parent =
-            Math.random() < 0.5 ? placedGears[0] : placedGears[Math.floor(randomIn(0, placedGears.length))];
+            Math.random() < 0.5
+              ? placedGears[0]
+              : placedGears[Math.floor(randomIn(0, placedGears.length))];
 
           const rP = parent.size / 2;
           const bite = biteBase + (asset.tier === "large" ? 2 : 0);
@@ -611,7 +614,6 @@ export default function Gears() {
         const rest = restTurns.value;
         const turnsAway = Math.abs(from - rest);
 
-        // ✅ Worklet-safe clamp (prevents iOS hard crash in Expo Go)
         const duration = clampWorklet(
           turnsAway * UNWIND_MS_PER_TURN,
           UNWIND_MIN_MS,
@@ -704,7 +706,6 @@ export default function Gears() {
 
   // ---------------- Stage measurement ----------------
   const [stageSizeState, setStageSizeState] = useState({ w: 0, h: 0 });
-  // NOTE: keep stageSize in sync with state (avoid churn)
   useEffect(() => {
     setStageSize(stageSizeState);
   }, [stageSizeState]);
@@ -719,15 +720,15 @@ export default function Gears() {
               left={<BackButton />}
               centerLabel="Power:"
               centerValue={power / 10}
-              onPressSettings={() => setSettingsOpen(true)}
+              onPressSettings={openSettings}
             />
           </View>
 
           {/* STAGE */}
           <View style={styles.stageWrap}>
             <PremiumStage
-              showShine={false} // ✅ KILLS the top gray cap
-              style={{ backgroundColor: "#161824" }} // keep your Gears stage tone
+              showShine={false}
+              style={{ backgroundColor: "#161824" }}
             >
               <View
                 style={styles.stageInner}
@@ -737,7 +738,6 @@ export default function Gears() {
                   measureDriverCenter();
                 }}
               >
-                {/* Stage backlight / glow (visual only) */}
                 <LinearGradient
                   pointerEvents="none"
                   colors={["rgba(255,255,255,0.10)", "rgba(255,255,255,0.00)"]}
@@ -747,12 +747,15 @@ export default function Gears() {
                 />
                 <View pointerEvents="none" style={styles.stageGlow} />
 
-                {/* Followers */}
                 {placed.map((g) => (
-                  <FollowerGear key={g.id} g={g} spinTurns={spinTurns} directionSV={directionSV} />
+                  <FollowerGear
+                    key={g.id}
+                    g={g}
+                    spinTurns={spinTurns}
+                    directionSV={directionSV}
+                  />
                 ))}
 
-                {/* DRIVER (Gesture target) */}
                 <GestureDetector gesture={pan}>
                   <View
                     ref={driverRef}
@@ -767,7 +770,9 @@ export default function Gears() {
                       },
                     ]}
                   >
-                    <Animated.View style={[{ width: "100%", height: "100%" }, driverStyle]}>
+                    <Animated.View
+                      style={[{ width: "100%", height: "100%" }, driverStyle]}
+                    >
                       <Animated.Image
                         source={DRIVER_SOURCE}
                         resizeMode="contain"
@@ -779,15 +784,6 @@ export default function Gears() {
               </View>
             </PremiumStage>
           </View>
-
-          {/* Settings modal */}
-          <SettingsModal
-            visible={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
-            onReset={reset}
-            soundOn={soundOn}
-            setSoundOn={setSoundOn}
-          />
         </SafeAreaView>
       </View>
     </FullscreenWrapper>

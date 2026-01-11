@@ -1,22 +1,10 @@
 // Fidget Frenzy – Stress Ball v0.9-dev unified
 // Expo SDK 54 / RN 0.81
-// ✅ Phase I: Tap (Living)
-// ✅ Phase II: Press/Hold (Pressure) + Explosion (release) + Mood Drift
-// ✅ Explosion sound cycles balloon-pop-1..6 in order (non-random)
-// ✅ Palette swap delayed after cool flash (intentional, not “blue glitch”)
-// ✅ Crash-safe explosion gating
-// ✅ Phase III: Drag (Explore)
-//    - Axis-correct bounds (width & height)
-//    - HARD clamp translation (ball never goes out of frame)
-//    - Wall resistance via deformation (tension) when pushing into edge
-//    - SAFE_EDGE_PAD removes tiny pixel clipping caused by pulse/stretch/overshoot
-//    - Spring return on release
-// ✅ Phase IV: Flick / Swipe (snap home w/ velocity — no parking, no wall pause)
-//
-// IMPORTANT:
-// - No JS helpers inside useAnimatedStyle; all math is worklet-safe.
+// ✅ Shell-standard Settings sound toggle (no local SettingsModal)
+// ✅ Reliable pooled SFX playback (Expo Go rapid triggers safe)
+// ✅ soundEnabledRef + useCallback to avoid stale closures from gestures
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Dimensions, SafeAreaView } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -33,14 +21,16 @@ import Animated, {
 } from "react-native-reanimated";
 import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
+import { Audio } from "expo-av";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
-import SettingsModal from "../../components/SettingsModal";
 import PremiumStage from "../../components/PremiumStage";
 import GameHeader from "../../components/GameHeader";
 import { frenzyTheme as t } from "../theme/frenzyTheme";
-import { playSound, preloadSounds } from "../../lib/soundManager";
+
+// ✅ Shell-standard Settings hook
+import { useSettingsUI } from "../../components/SettingsUIProvider";
 
 const { width: W } = Dimensions.get("window");
 const BALL_SIZE = W * 0.52;
@@ -149,14 +139,10 @@ const BALLOON_POP_FILES = [
   require("../../assets/sounds/balloon-pop-6.mp3"),
 ] as const;
 
-const BALLOON_POP_KEYS = [
-  "balloon-pop-1",
-  "balloon-pop-2",
-  "balloon-pop-3",
-  "balloon-pop-4",
-  "balloon-pop-5",
-  "balloon-pop-6",
-] as const;
+// Core SFX
+const SFX_SQUISH = require("../../assets/sounds/squish.mp3");
+const SFX_POP = require("../../assets/sounds/pop.mp3");
+const SFX_BUBBLE = require("../../assets/sounds/bubble.mp3");
 
 // Utility: shuffle array (Fisher–Yates) — JS only
 const shuffle = <T,>(arr: T[]) => {
@@ -168,11 +154,65 @@ const shuffle = <T,>(arr: T[]) => {
   return a;
 };
 
-export default function StressBallScreen() {
-  const [soundOn, setSoundOn] = useState(true);
-  const [settingsVisible, setSettingsVisible] = useState(false);
-  const [pressCount, setPressCount] = useState(0);
+// ---------------------------
+// Reliable pooled SFX (Expo Go safe)
+// ---------------------------
+type SoundPool = {
+  sounds: Audio.Sound[];
+  idx: number;
+};
 
+async function createPool(source: any, size: number): Promise<SoundPool> {
+  const sounds: Audio.Sound[] = [];
+  for (let i = 0; i < size; i++) {
+    const s = new Audio.Sound();
+    await s.loadAsync(source, { shouldPlay: false, volume: 1.0 }, false);
+    sounds.push(s);
+  }
+  return { sounds, idx: 0 };
+}
+
+async function unloadPool(pool: SoundPool | null) {
+  if (!pool) return;
+  await Promise.all(
+    pool.sounds.map(async (s) => {
+      try {
+        await s.unloadAsync();
+      } catch {}
+    })
+  );
+}
+
+async function playFromPool(pool: SoundPool | null) {
+  if (!pool || pool.sounds.length === 0) return;
+  const s = pool.sounds[pool.idx % pool.sounds.length];
+  pool.idx = (pool.idx + 1) % pool.sounds.length;
+
+  try {
+    await s.setPositionAsync(0);
+    await s.playAsync();
+  } catch {}
+}
+
+export default function StressBallScreen() {
+  // ✅ shell settings
+  const settings = useSettingsUI();
+
+  // Most likely:
+  const soundEnabled = (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
+  const openSettings =
+    (settings as any).openSettings ??
+    (settings as any).showSettings ??
+    (settings as any).openSettingsModal ??
+    (() => {});
+
+  // ✅ keep latest sound state for gesture callbacks
+  const soundEnabledRef = useRef<boolean>(!!soundEnabled);
+  useEffect(() => {
+    soundEnabledRef.current = !!soundEnabled;
+  }, [soundEnabled]);
+
+  const [pressCount, setPressCount] = useState(0);
   const [paletteIndex, setPaletteIndex] = useState(0);
 
   // helper for UI-thread -> JS increments
@@ -187,6 +227,13 @@ export default function StressBallScreen() {
 
   // Delay timer for palette swap after explosion flash
   const paletteSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✅ pooled SFX
+  const squishPoolRef = useRef<SoundPool | null>(null);
+  const popPoolRef = useRef<SoundPool | null>(null);
+  const bubblePoolRef = useRef<SoundPool | null>(null);
+  const balloonPoolsRef = useRef<SoundPool[]>([]);
+  const poolsReadyRef = useRef(false);
 
   const nextPaletteIndex = () => {
     if (bagRef.current.length === 0) {
@@ -240,42 +287,99 @@ export default function StressBallScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  const playSfx = useCallback(async (kind: "squish" | "pop" | "bubble") => {
+    if (!soundEnabledRef.current) return;
+    if (!poolsReadyRef.current) return;
+
+    try {
+      if (kind === "squish") await playFromPool(squishPoolRef.current);
+      if (kind === "pop") await playFromPool(popPoolRef.current);
+      if (kind === "bubble") await playFromPool(bubblePoolRef.current);
+    } catch {}
+  }, []);
+
+  const playBalloonPopSeq = useCallback(async () => {
+    if (!soundEnabledRef.current) return;
+    if (!poolsReadyRef.current) return;
+
+    const idx = popSeqRef.current % BALLOON_POP_FILES.length;
+    const pool = balloonPoolsRef.current[idx];
+    popSeqRef.current = (idx + 1) % BALLOON_POP_FILES.length;
+
+    try {
+      await playFromPool(pool);
+    } catch {}
+  }, []);
+
   useEffect(() => {
-    preloadSounds({
-      squish: require("../../assets/sounds/squish.mp3"),
-      pop: require("../../assets/sounds/pop.mp3"),
-      bubble: require("../../assets/sounds/bubble.mp3"),
+    let cancelled = false;
 
-      "balloon-pop-1": BALLOON_POP_FILES[0],
-      "balloon-pop-2": BALLOON_POP_FILES[1],
-      "balloon-pop-3": BALLOON_POP_FILES[2],
-      "balloon-pop-4": BALLOON_POP_FILES[3],
-      "balloon-pop-5": BALLOON_POP_FILES[4],
-      "balloon-pop-6": BALLOON_POP_FILES[5],
-    });
+    (async () => {
+      try {
+        // seed bag
+        lastPaletteRef.current = 0;
+        bagRef.current = shuffle(
+          Array.from({ length: BALL_PALETTES.length }, (_, i) => i).filter((i) => i !== 0)
+        );
 
-    // seed bag
-    lastPaletteRef.current = 0;
-    bagRef.current = shuffle(
-      Array.from({ length: BALL_PALETTES.length }, (_, i) => i).filter((i) => i !== 0)
-    );
+        // build pools
+        const [squishPool, popPool, bubblePool] = await Promise.all([
+          createPool(SFX_SQUISH, 4),
+          createPool(SFX_POP, 4),
+          createPool(SFX_BUBBLE, 3),
+        ]);
 
-    if (IDLE_PULSE_ON) {
-      pulse.value = withRepeat(
-        withSequence(
-          withSpring(1.02, { stiffness: 55, damping: 12 }),
-          withSpring(0.98, { stiffness: 55, damping: 12 })
-        ),
-        -1,
-        true
-      );
-    }
+        const balloonPools: SoundPool[] = [];
+        for (let i = 0; i < BALLOON_POP_FILES.length; i++) {
+          // eslint-disable-next-line no-await-in-loop
+          balloonPools.push(await createPool(BALLOON_POP_FILES[i], 2));
+        }
+
+        if (cancelled) {
+          await unloadPool(squishPool);
+          await unloadPool(popPool);
+          await unloadPool(bubblePool);
+          await Promise.all(balloonPools.map(unloadPool));
+          return;
+        }
+
+        squishPoolRef.current = squishPool;
+        popPoolRef.current = popPool;
+        bubblePoolRef.current = bubblePool;
+        balloonPoolsRef.current = balloonPools;
+        poolsReadyRef.current = true;
+
+        if (IDLE_PULSE_ON) {
+          pulse.value = withRepeat(
+            withSequence(
+              withSpring(1.02, { stiffness: 55, damping: 12 }),
+              withSpring(0.98, { stiffness: 55, damping: 12 })
+            ),
+            -1,
+            true
+          );
+        }
+      } catch {
+        poolsReadyRef.current = false;
+      }
+    })();
 
     return () => {
+      cancelled = true;
+
       if (paletteSwapTimerRef.current) {
         clearTimeout(paletteSwapTimerRef.current);
         paletteSwapTimerRef.current = null;
       }
+
+      (async () => {
+        try {
+          await unloadPool(squishPoolRef.current);
+          await unloadPool(popPoolRef.current);
+          await unloadPool(bubblePoolRef.current);
+          await Promise.all(balloonPoolsRef.current.map(unloadPool));
+        } catch {}
+      })();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -291,55 +395,56 @@ export default function StressBallScreen() {
     dragY.value = withSpring(0, DRAG_SPRING);
   };
 
-  const onTap = async () => {
+  const onTap = useCallback(async () => {
     if (isPressuringRef.current) return;
 
     scale.value = withSpring(TAP_SQUISH, { stiffness: 170, damping: 12 });
 
-    if (soundOn) await playSound("squish", require("../../assets/sounds/squish.mp3"));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await playSfx("squish");
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
 
     setPressCount((p) => p + 1);
 
-    if (soundOn) await playSound("pop", require("../../assets/sounds/pop.mp3"));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await playSfx("pop");
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch {}
 
     bumpBackToRest();
-  };
+  }, [playSfx, scale]);
 
-  const stepFX = async (step: number) => {
-    if (!isPressuringRef.current) return;
-    if (didExplodeRef.current) return;
+  const stepFX = useCallback(
+    async (step: number) => {
+      if (!isPressuringRef.current) return;
+      if (didExplodeRef.current) return;
 
-    try {
-      if (step === 1) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        if (soundOn) await playSound("squish", require("../../assets/sounds/squish.mp3"));
-      } else if (step === 2) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        if (soundOn) await playSound("bubble", require("../../assets/sounds/bubble.mp3"));
-      } else if (step === 3) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-        if (soundOn) await playSound("squish", require("../../assets/sounds/squish.mp3"));
-      } else if (step === 4) {
-        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      }
-    } catch {}
-  };
+      try {
+        if (step === 1) {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          await playSfx("squish");
+        } else if (step === 2) {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          await playSfx("bubble");
+        } else if (step === 3) {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          await playSfx("squish");
+        } else if (step === 4) {
+          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+        }
+      } catch {}
+    },
+    [playSfx]
+  );
 
-  const runExplosionFX = async () => {
+  const runExplosionFX = useCallback(async () => {
     if (didExplodeRef.current) return;
 
     didExplodeRef.current = true;
     setPressCount((p) => p + 1);
 
-    try {
-      if (soundOn) {
-        const idx = popSeqRef.current % BALLOON_POP_FILES.length;
-        await playSound(BALLOON_POP_KEYS[idx], BALLOON_POP_FILES[idx]);
-        popSeqRef.current = (idx + 1) % BALLOON_POP_FILES.length;
-      }
-    } catch {}
+    await playBalloonPopSeq();
 
     try {
       await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -359,9 +464,9 @@ export default function StressBallScreen() {
     setTimeout(() => {
       didExplodeRef.current = false;
     }, 0);
-  };
+  }, [isPressuringSV, playBalloonPopSeq]);
 
-  const onPressureStart = async () => {
+  const onPressureStart = useCallback(async () => {
     isPressuringRef.current = true;
     isPressuringSV.value = 1;
     didExplodeRef.current = false;
@@ -373,8 +478,10 @@ export default function StressBallScreen() {
     pressure.value = 0;
     explosion.value = 0;
 
-    if (soundOn) await playSound("bubble", require("../../assets/sounds/bubble.mp3"));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    await playSfx("bubble");
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    } catch {}
 
     pressure.value = withTiming(
       1,
@@ -395,9 +502,9 @@ export default function StressBallScreen() {
         pressureStep.value = 0;
       }
     );
-  };
+  }, [explosion, explosionTrigger, isPressuringSV, playSfx, pressure, pressureStep, scale]);
 
-  const onPressureRelease = async () => {
+  const onPressureRelease = useCallback(async () => {
     if (didExplodeRef.current) {
       isPressuringRef.current = false;
       isPressuringSV.value = 0;
@@ -410,8 +517,10 @@ export default function StressBallScreen() {
     pressure.value = withTiming(0, { duration: 140 });
     pressureStep.value = 0;
 
-    if (soundOn) await playSound("pop", require("../../assets/sounds/pop.mp3"));
-    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    await playSfx("pop");
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+    } catch {}
 
     bumpBackToRest();
 
@@ -419,7 +528,7 @@ export default function StressBallScreen() {
       isPressuringRef.current = false;
       isPressuringSV.value = 0;
     }, 60);
-  };
+  }, [isPressuringSV, playSfx, pressure, pressureStep]);
 
   const onDragBeginJS = async () => {
     if (isPressuringRef.current) return;
@@ -579,13 +688,9 @@ export default function StressBallScreen() {
     .onBegin(() => {
       if (isPressuringSV.value > 0.5) return;
 
-      // reset per-gesture drag count flag
       dragCountsSV.value = false;
-
-      // reset clamp state for wall-tick logic
       wasClampedSV.value = false;
 
-      // stop any existing motion so the new touch owns it
       cancelAnimation(dragX);
       cancelAnimation(dragY);
 
@@ -597,16 +702,12 @@ export default function StressBallScreen() {
       dragX.value = e.translationX;
       dragY.value = e.translationY;
 
-      // mark as a "real drag" once threshold exceeded
       const dist = Math.hypot(e.translationX, e.translationY);
       if (!dragCountsSV.value && dist > DRAG_SQUEEZE_THRESHOLD) {
         dragCountsSV.value = true;
       }
 
-      // ---------------------------
-      // Option A: wall-hit micro haptic on FAST clamp
-      // (recompute same bounds as ballStyle)
-      // ---------------------------
+      // wall-hit micro haptic on FAST clamp
       const w = stageWSV.value > 0 ? stageWSV.value : BALL_SIZE * 1.9;
       const h = stageHSV.value > 0 ? stageHSV.value : BALL_SIZE * 2.4;
 
@@ -638,7 +739,6 @@ export default function StressBallScreen() {
     .onEnd((e) => {
       if (isPressuringSV.value > 0.5) return;
 
-      // increment squeezes on release for real drags (includes flicks)
       if (dragCountsSV.value) {
         runOnJS(incPressCount)();
       }
@@ -647,20 +747,17 @@ export default function StressBallScreen() {
       const isFlick = vMag > FLICK_MIN_VELOCITY;
 
       if (isFlick) {
-        // ✅ Flick: snap home immediately with release velocity (no wall pause, no parking)
         dragX.value = withSpring(0, { ...FLICK_SPRING, velocity: e.velocityX });
         dragY.value = withSpring(0, { ...FLICK_SPRING, velocity: e.velocityY });
         return;
       }
 
-      // Normal release: spring home
       dragX.value = withSpring(0, DRAG_SPRING);
       dragY.value = withSpring(0, DRAG_SPRING);
     })
     .onFinalize(() => {
       if (isPressuringSV.value > 0.5) return;
 
-      // keep consistent cleanup; don't stomp motion if it already ended cleanly
       dragCountsSV.value = false;
       wasClampedSV.value = false;
       runOnJS(onDragFinalizeJS)();
@@ -688,7 +785,7 @@ export default function StressBallScreen() {
               left={<BackButton />}
               centerLabel="Squeezes:"
               centerValue={pressCount}
-              onPressSettings={() => setSettingsVisible(true)}
+              onPressSettings={() => openSettings()}
             />
           </View>
 
@@ -702,7 +799,6 @@ export default function StressBallScreen() {
                     if (width > 0 && Math.abs(width - stageW) > 2) setStageW(width);
                     if (height > 0 && Math.abs(height - stageH) > 2) setStageH(height);
 
-                    // ✅ keep shared values in sync for UI-thread clamp detection
                     if (width > 0) stageWSV.value = width;
                     if (height > 0) stageHSV.value = height;
                   }}
@@ -742,13 +838,7 @@ export default function StressBallScreen() {
             </View>
           </View>
 
-          <SettingsModal
-            visible={settingsVisible}
-            onClose={() => setSettingsVisible(false)}
-            onReset={reset}
-            soundOn={soundOn}
-            setSoundOn={setSoundOn}
-          />
+          {/* ✅ no local SettingsModal; shell-standard settings handles it */}
         </SafeAreaView>
       </View>
     </FullscreenWrapper>

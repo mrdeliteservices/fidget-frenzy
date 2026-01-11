@@ -1,18 +1,15 @@
 // app/screens/light-switch.tsx
 // Fidget Frenzy — Light Switch (v0.9-dev WALL + BUTTON, RAPID FIRE + "Clicks:")
-//
-// Based on the 900+ line version you confirmed matches.
-// Changes from that version:
-//  1) Header counter now shows "Clicks:  X".
-//  2) Audio uses a 3-sound pool for rapid-fire clicking.
-//  3) toggle() no longer drops taps while animating and uses a faster 160ms animation.
-// Visual polish today:
-//  4) Contrast pass: wall separation + plate readability + button state clarity (OFF vs ON).
-//  5) Option A: tone plate down slightly (less “WHITE SQUARE!”).
-//  6) Flip button travel so ON feels pressed IN.
+// ✅ Migrated to shell-standard Settings (useSettingsUI)
+// ✅ Sound toggle respects global setting (no local sound state)
+// ✅ Audio uses a 3-sound pool for rapid-fire clicking (kept)
+// ✅ Pool is unloaded on unmount (prevents leaks)
+// ✅ toggle() no longer drops taps while animating and uses a faster 160ms animation.
+// Visual polish preserved:
+//  - Contrast pass, plate tone, ON travel pressed IN
 // No layout / geometry changes.
 
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -42,8 +39,10 @@ import Svg, {
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
-import SettingsModal from "../../components/SettingsModal";
 import GameHeader from "../../components/GameHeader";
+
+// ✅ Shell-standard Settings hook
+import { useSettingsUI } from "../../components/SettingsUIProvider";
 
 const { width: W, height: H } = Dimensions.get("window");
 
@@ -90,10 +89,25 @@ const CEILING_H = 10;
 const CEILING_MARGIN_B = 4;
 
 export default function LightSwitch() {
+  // ✅ shell settings
+  const settings = useSettingsUI();
+
+  // Most likely names; fallback to avoid breaking if your hook uses different keys.
+  const soundEnabled = (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
+  const openSettings =
+    (settings as any).openSettings ??
+    (settings as any).showSettings ??
+    (settings as any).openSettingsModal ??
+    (() => {});
+
+  // ✅ keep latest sound state for async click playback (closure-proof)
+  const soundEnabledRef = useRef<boolean>(!!soundEnabled);
+  useEffect(() => {
+    soundEnabledRef.current = !!soundEnabled;
+  }, [soundEnabled]);
+
   const [isOn, setIsOn] = useState(false);
   const [count, setCount] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [soundOn, setSoundOn] = useState(true);
 
   // Dev Menu (visible ONLY if DEBUG)
   const [debugOpen, setDebugOpen] = useState(false);
@@ -107,9 +121,13 @@ export default function LightSwitch() {
   const clickPoolRef = useRef<Audio.Sound[]>([]);
   const clickPoolLoadedRef = useRef(false);
   const clickPoolIndexRef = useRef(0);
+  const clickPoolLoadingRef = useRef(false);
 
   const ensureClickPool = async () => {
     if (clickPoolLoadedRef.current) return;
+    if (clickPoolLoadingRef.current) return;
+
+    clickPoolLoadingRef.current = true;
 
     try {
       const file = require("../../assets/sounds/switch-click.mp3");
@@ -126,11 +144,13 @@ export default function LightSwitch() {
       clickPoolLoadedRef.current = true;
     } catch (e) {
       console.warn("switch-click pool load error", e);
+    } finally {
+      clickPoolLoadingRef.current = false;
     }
   };
 
   const playRapidClick = async () => {
-    if (!soundOn) return;
+    if (!soundEnabledRef.current) return;
 
     await ensureClickPool();
     const pool = clickPoolRef.current;
@@ -150,6 +170,25 @@ export default function LightSwitch() {
       // swallow any playback glitch
     }
   };
+
+  // ✅ Unload pool on unmount (prevents leaks)
+  useEffect(() => {
+    return () => {
+      const pool = clickPoolRef.current;
+      clickPoolRef.current = [];
+      clickPoolLoadedRef.current = false;
+      clickPoolIndexRef.current = 0;
+
+      // fire-and-forget unload (avoid blocking navigation)
+      Promise.all(
+        pool.map(async (s) => {
+          try {
+            await s.unloadAsync();
+          } catch {}
+        })
+      ).catch(() => {});
+    };
+  }, []);
 
   // ================== TUNABLES (Dev Menu) ==================
   // Dome & beam geometry
@@ -226,7 +265,7 @@ export default function LightSwitch() {
     POOL_RAISE,
   ]);
 
-  // Toggle — now rapid fire, no dropped taps
+  // Toggle — rapid fire, no dropped taps
   const toggle = () => {
     const next = !isOn;
     setIsOn(next);
@@ -303,7 +342,7 @@ export default function LightSwitch() {
             left={<BackButton />}
             centerLabel="Clicks:"
             centerValue={count}
-            onPressSettings={() => setSettingsOpen(true)}
+            onPressSettings={() => openSettings()}
           />
 
           {/* Ceiling line */}
@@ -555,14 +594,7 @@ export default function LightSwitch() {
             </View>
           </View>
 
-          {/* Settings modal */}
-          <SettingsModal
-            visible={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
-            onReset={reset}
-            soundOn={soundOn}
-            setSoundOn={setSoundOn}
-          />
+          {/* ✅ No local SettingsModal (shell settings owns it) */}
         </SafeAreaView>
 
         {/* ===== Dev FAB / Dev Menu (only when DEBUG) ===== */}

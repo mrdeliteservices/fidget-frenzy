@@ -1,3 +1,4 @@
+// app/screens/odometer.tsx
 // Fidget Frenzy – Odometer v0.9-dev (A1 Scaling)
 // UI PASS (Header Standardization + World Fix)
 // ✅ Replace PremiumHeader with canonical GameHeader Standard
@@ -5,7 +6,8 @@
 // ✅ Preserve all physics/audio/gesture logic (unchanged)
 // ✅ Stage cap removal uses PremiumStage showShine={false} (no overpaint hack)
 // ✅ Stage surface set to solid Gears-top gray so tire doesn’t get swallowed
-// NOTE: No refactors/cleanup beyond UI layer adjustments.
+// ✅ Migrated to shell-standard Settings (useSettingsUI) + global sound toggle
+// NOTE: No refactors/cleanup beyond UI + Settings wiring.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -30,7 +32,6 @@ import { LinearGradient } from "expo-linear-gradient";
 
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
-import SettingsModal from "../../components/SettingsModal";
 import PremiumStage from "../../components/PremiumStage";
 import GameHeader from "../../components/GameHeader";
 import { frenzyTheme as t } from "../theme/frenzyTheme";
@@ -41,6 +42,9 @@ import {
   fadeOutAndStop,
   GlobalSoundManager,
 } from "../../lib/soundManager";
+
+// ✅ Shell-standard Settings hook
+import { useSettingsUI } from "../../components/SettingsUIProvider";
 
 // ----------------------------------------------
 // USER TUNING CONTROLS
@@ -204,14 +208,22 @@ const clamp = (v: number, lo: number, hi: number) => {
 //  COMPONENT
 // ======================================================
 export default function OdometerScreen() {
-  const [soundOn, setSoundOn] = useState(true);
-  const [settingsVisible, setSettingsVisible] = useState(false);
+  // ✅ shell settings (global)
+  const settings = useSettingsUI();
+  const soundEnabled = (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
+  const openSettings =
+    (settings as any).openSettings ??
+    (settings as any).showSettings ??
+    (settings as any).openSettingsModal ??
+    (() => {});
+
   const [mileage, setMileage] = useState(0);
 
-  const soundOnRef = useRef(soundOn);
+  // ✅ closure-proof sound gate used by async audio functions
+  const soundOnRef = useRef<boolean>(!!soundEnabled);
   useEffect(() => {
-    soundOnRef.current = soundOn;
-  }, [soundOn]);
+    soundOnRef.current = !!soundEnabled;
+  }, [soundEnabled]);
 
   const tireAngle = useSharedValue(0);
   const tireOmega = useSharedValue(0);
@@ -249,7 +261,7 @@ export default function OdometerScreen() {
     engineAudioOn.value = 0;
     void GlobalSoundManager.stop(ENGINE_ID);
     void GlobalSoundManager.stop(BRAKE_ID);
-  }, []);
+  }, []); // engineAudioOn is a shared value; safe to omit
 
   useFocusEffect(
     useCallback(() => {
@@ -280,9 +292,10 @@ export default function OdometerScreen() {
     });
   }, []);
 
+  // ✅ If sound is disabled globally, kill any ongoing engine/brake audio
   useEffect(() => {
-    if (!soundOn) stopAllOdometerAudio();
-  }, [soundOn, stopAllOdometerAudio]);
+    if (!soundEnabled) stopAllOdometerAudio();
+  }, [soundEnabled, stopAllOdometerAudio]);
 
   useEffect(() => {
     return () => stopAllOdometerAudio();
@@ -633,7 +646,7 @@ export default function OdometerScreen() {
               left={<BackButton />}
               centerLabel="Miles:"
               centerValue={formattedMileage}
-              onPressSettings={() => setSettingsVisible(true)}
+              onPressSettings={() => openSettings()}
             />
           </View>
 
@@ -685,38 +698,7 @@ export default function OdometerScreen() {
                   </View>
                 </View>
 
-                <SettingsModal
-                  visible={settingsVisible}
-                  onClose={() => setSettingsVisible(false)}
-                  onReset={() => {
-                    tireAngle.value = 0;
-                    tireOmega.value = 0;
-                    lapProgress.value = 0;
-                    totalMiles.value = 0;
-                    lastMileageInt.value = 0;
-
-                    isBraking.value = false;
-                    brakeLatch.value = false;
-                    carSpeed.value = 0;
-                    carDirection.value = 1;
-                    brakeStartSpeed.value = 0;
-                    brakeElapsed.value = 0;
-
-                    isDragging.value = false;
-                    dragLastTouchAngle.value = 0;
-                    lastDragDir.value = 0;
-                    lastStableDir.value = 1;
-                    dragDirStable.value = 1;
-
-                    lastImpulseMs.value = 0;
-                    lastHapticMs.value = 0;
-
-                    setMileage(0);
-                    stopEngineInstant();
-                  }}
-                  soundOn={soundOn}
-                  setSoundOn={setSoundOn}
-                />
+                {/* ✅ No local SettingsModal (shell settings owns it) */}
               </PremiumStage>
             </View>
           </View>
