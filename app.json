@@ -3,7 +3,7 @@
     "name": "Fidget Frenzy Elite",
     "slug": "fidget-frenzy",
     "scheme": "fidgetfrenzyelite",
-    "version": "1.0.0",
+    "version": "0.9.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.mrdeliteservices.fidgetfrenzyelite",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -28,7 +28,7 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.mrdeliteservices.fidgetfrenzyelite",
-      "versionCode": 3
+      "versionCode": 4
     },
     "web": {
       "favicon": "./assets/favicon.png"
