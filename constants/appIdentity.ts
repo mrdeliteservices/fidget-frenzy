@@ -4,7 +4,7 @@
 
 export const APP_IDENTITY = {
   // In-app brand name (trademark name once approved)
-  displayName: "Fidget Frenzy",
+  displayName: "Fidget Frenzy Elite",
 
   // Expo project slug (matches app.json)
   slug: "fidget-frenzy",

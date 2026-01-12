@@ -14,19 +14,15 @@ import { Audio } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 
 import FullscreenWrapper, { useSettingsUI } from "../components/FullscreenWrapper";
-import { BRAND_ATTRIBUTION_LINES } from "../constants/branding";
+import {
+  BRAND_ATTRIBUTION_LINES,
+  WELCOME_TAGLINES,
+} from "../constants/branding";
 import { APP_IDENTITY } from "../constants/appIdentity";
 
 const { width: W } = Dimensions.get("window");
 
 const TAP_SOUND = require("../assets/sounds/switch-click.mp3");
-
-const TAGLINES = [
-  "Find your focus",
-  "Tap away your stress",
-  "Relax. Tap. Repeat.",
-  "Because everyone needs a little Frenzy",
-];
 
 const HEADLINE_SLOT_HEIGHT = 72;
 
@@ -66,7 +62,15 @@ function WelcomeInner() {
 
   const soundRef = useRef<Audio.Sound | null>(null);
 
-  const isLast = index === TAGLINES.length - 1;
+  const taglines = useMemo(() => {
+    // Safety: if someone forgets to define taglines, we still won't crash.
+    if (Array.isArray(WELCOME_TAGLINES) && WELCOME_TAGLINES.length > 0) {
+      return WELCOME_TAGLINES;
+    }
+    return ["Because everyone needs a little Frenzy"];
+  }, []);
+
+  const isLast = index === taglines.length - 1;
 
   const attributionText = useMemo(() => BRAND_ATTRIBUTION_LINES.join("\n"), []);
 
@@ -91,6 +95,13 @@ function WelcomeInner() {
 
   // ✨ tagline animation sequence (per-line entrance)
   useEffect(() => {
+    // Clamp index just in case taglines change length across resets/hot reload
+    const safeIndex = Math.min(Math.max(index, 0), taglines.length - 1);
+    if (safeIndex !== index) {
+      setIndex(safeIndex);
+      return;
+    }
+
     const from = getFromState(index);
 
     // Reset to the correct "from" state
@@ -131,7 +142,7 @@ function WelcomeInner() {
     const inHandle = animateIn.start(() => {
       const holdId = setTimeout(() => {
         animateOut.start(() => {
-          if (index < TAGLINES.length - 1) {
+          if (index < taglines.length - 1) {
             setIndex((prev) => prev + 1);
           } else {
             router.replace("/home");
@@ -154,7 +165,7 @@ function WelcomeInner() {
       // (No-op return)
       void inHandle;
     };
-  }, [index, opacity, translateX, translateY, scale, router]);
+  }, [index, taglines, opacity, translateX, translateY, scale, router]);
 
   const handlePress = useCallback(async () => {
     try {
@@ -200,7 +211,7 @@ function WelcomeInner() {
         >
           <View style={styles.headlineSlot}>
             <Text style={styles.tagline} numberOfLines={2}>
-              {TAGLINES[index]}
+              {taglines[index]}
             </Text>
           </View>
 

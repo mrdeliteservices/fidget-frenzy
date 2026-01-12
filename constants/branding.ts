@@ -14,3 +14,15 @@ export const BRAND_ATTRIBUTION_LINES = [
   "Created by Frenzy Apps,",
   "a brand of MRD Elite Services, LLC",
 ];
+
+/**
+ * Welcome screen taglines (unique per app).
+ * Each app repo should override these values to match the app’s identity.
+ * Keep short + punchy. The final line should remain the universal Frenzy standard.
+ */
+export const WELCOME_TAGLINES = [
+  "Find your focus.",
+  "Tap away your stress.",
+  "Relax. Tap. Repeat.",
+  "Because everyone needs a little Frenzy.",
+];
