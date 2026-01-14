@@ -2,7 +2,7 @@
   "expo": {
     "name": "Fidget Frenzy Elite",
     "slug": "fidget-frenzy",
-    "scheme": "fidgetfrenzyelite",
+    "scheme": "fidgetfrenzy",
     "version": "0.9.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -15,8 +15,8 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mrdeliteservices.fidgetfrenzyelite",
-      "buildNumber": "5",
+      "bundleIdentifier": "com.mrdeliteservices.fidgetfrenzy",
+      "buildNumber": "1",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -27,8 +27,8 @@
         "backgroundColor": "#081A34"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.mrdeliteservices.fidgetfrenzyelite",
-      "versionCode": 4
+      "package": "com.mrdeliteservices.fidgetfrenzy",
+      "versionCode": 1
     },
     "web": {
       "favicon": "./assets/favicon.png"

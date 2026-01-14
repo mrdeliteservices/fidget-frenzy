@@ -20,8 +20,8 @@
       "autoIncrement": false
     },
     "production": {
-      "autoIncrement": true,
       "distribution": "store",
+      "autoIncrement": false,
       "android": {
         "buildType": "app-bundle"
       },
@@ -36,7 +36,8 @@
   "submit": {
     "production": {
       "ios": {
-        "appleTeamId": "HL79977WF2"
+        "appleTeamId": "HL79977WF2",
+        "ascAppId": "6757769403"
       }
     }
   }
