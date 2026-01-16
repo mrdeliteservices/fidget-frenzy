@@ -3,7 +3,7 @@
     "name": "Fidget Frenzy Elite",
     "slug": "fidget-frenzy",
     "scheme": "fidgetfrenzy",
-    "version": "0.9.1",
+    "version": "0.9.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
