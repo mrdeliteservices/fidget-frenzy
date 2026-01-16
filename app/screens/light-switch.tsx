@@ -5,11 +5,12 @@
 // ✅ Audio uses a 3-sound pool for rapid-fire clicking (kept)
 // ✅ Pool is unloaded on unmount (prevents leaks)
 // ✅ toggle() no longer drops taps while animating and uses a faster 160ms animation.
+// ✅ FIX: wire Settings -> Reset via FullscreenWrapper onReset
 // Visual polish preserved:
 //  - Contrast pass, plate tone, ON travel pressed IN
 // No layout / geometry changes.
 
-import React, { useMemo, useRef, useState, useEffect } from "react";
+import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -40,6 +41,7 @@ import Svg, {
 import FullscreenWrapper from "../../components/FullscreenWrapper";
 import BackButton from "../../components/BackButton";
 import GameHeader from "../../components/GameHeader";
+import { APP_IDENTITY } from "../../constants/appIdentity";
 
 // ✅ Shell-standard Settings hook
 import { useSettingsUI } from "../../components/SettingsUIProvider";
@@ -93,7 +95,8 @@ export default function LightSwitch() {
   const settings = useSettingsUI();
 
   // Most likely names; fallback to avoid breaking if your hook uses different keys.
-  const soundEnabled = (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
+  const soundEnabled =
+    (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
   const openSettings =
     (settings as any).openSettings ??
     (settings as any).showSettings ??
@@ -272,7 +275,7 @@ export default function LightSwitch() {
     setCount((c) => c + 1);
 
     // Fire-and-forget haptics + sound
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
     playRapidClick();
 
     animatingRef.current = true;
@@ -290,13 +293,14 @@ export default function LightSwitch() {
     });
   };
 
-  const reset = () => {
+  // ✅ Reset wiring target for Settings -> Reset
+  const reset = useCallback(() => {
     setIsOn(false);
     setCount(0);
     a.stopAnimation();
     a.setValue(0);
     animatingRef.current = false;
-  };
+  }, [a]);
 
   // Interpolations
   const coneOpacity = a.interpolate({
@@ -334,7 +338,7 @@ export default function LightSwitch() {
   `;
 
   return (
-    <FullscreenWrapper>
+    <FullscreenWrapper appName={APP_IDENTITY.displayName} onReset={reset}>
       <View style={[styles.root, { backgroundColor: COLOR.bg }]}>
         <SafeAreaView style={{ flex: 1 }}>
           {/* HEADER (canonical GameHeader) */}
@@ -360,7 +364,9 @@ export default function LightSwitch() {
           </View>
 
           {/* Cord */}
-          <View style={[styles.cord, { height: L.cordHeight, marginBottom: -1 }]} />
+          <View
+            style={[styles.cord, { height: L.cordHeight, marginBottom: -1 }]}
+          />
 
           {/* ===================== LAMP GROUP ===================== */}
           <View style={[styles.lampGroup, { top: L.LAMP_GROUP_TOP }]}>
@@ -404,9 +410,21 @@ export default function LightSwitch() {
               <Svg width={L.bottomW} height={L.coneH}>
                 <Defs>
                   <SvgLinearGradient id="beamFadeY" x1="0" y1="0" x2="0" y2="1">
-                    <Stop offset="0%" stopColor={COLOR.warmGlow} stopOpacity="0.78" />
-                    <Stop offset="42%" stopColor={COLOR.warmGlow} stopOpacity="0.3" />
-                    <Stop offset="100%" stopColor={COLOR.warmGlow} stopOpacity="0.06" />
+                    <Stop
+                      offset="0%"
+                      stopColor={COLOR.warmGlow}
+                      stopOpacity="0.78"
+                    />
+                    <Stop
+                      offset="42%"
+                      stopColor={COLOR.warmGlow}
+                      stopOpacity="0.3"
+                    />
+                    <Stop
+                      offset="100%"
+                      stopColor={COLOR.warmGlow}
+                      stopOpacity="0.06"
+                    />
                   </SvgLinearGradient>
                 </Defs>
                 <Path d={conePath} fill="url(#beamFadeY)" />
@@ -457,10 +475,18 @@ export default function LightSwitch() {
                   <Path
                     d={`
                       M ${L.domeW / 2 - L.bulbHalfW} ${rimY - 10}
-                      Q ${L.domeW / 2 - (L.bulbHalfW - 6)} ${rimY - 26} ${L.domeW / 2} ${rimY - 40}
-                      Q ${L.domeW / 2 + (L.bulbHalfW - 6)} ${rimY - 26} ${L.domeW / 2 + L.bulbHalfW} ${rimY - 10}
-                      Q ${L.domeW / 2 + L.bulbHalfW} ${rimY - 2} ${L.domeW / 2} ${rimY + 34}
-                      Q ${L.domeW / 2 - L.bulbHalfW} ${rimY - 2} ${L.domeW / 2 - L.bulbHalfW} ${rimY - 10} Z
+                      Q ${L.domeW / 2 - (L.bulbHalfW - 6)} ${rimY - 26} ${
+                      L.domeW / 2
+                    } ${rimY - 40}
+                      Q ${L.domeW / 2 + (L.bulbHalfW - 6)} ${rimY - 26} ${
+                      L.domeW / 2
+                    } ${rimY - 10}
+                      Q ${L.domeW / 2 + L.bulbHalfW} ${rimY - 2} ${
+                      L.domeW / 2
+                    } ${rimY + 34}
+                      Q ${L.domeW / 2 - L.bulbHalfW} ${rimY - 2} ${
+                      L.domeW / 2 - L.bulbHalfW
+                    } ${rimY - 10} Z
                     `}
                     fill={COLOR.glassFill}
                     stroke={COLOR.glassStroke}
@@ -469,8 +495,12 @@ export default function LightSwitch() {
                   <AnimatedPath
                     d={`
                       M ${L.domeW / 2 - 9} ${rimY - 22}
-                      Q ${L.domeW / 2 - 4} ${rimY - 14} ${L.domeW / 2} ${rimY - 10}
-                      Q ${L.domeW / 2 + 4} ${rimY - 14} ${L.domeW / 2 + 9} ${rimY - 22}
+                      Q ${L.domeW / 2 - 4} ${rimY - 14} ${L.domeW / 2} ${
+                      rimY - 10
+                    }
+                      Q ${L.domeW / 2 + 4} ${rimY - 14} ${L.domeW / 2 + 9} ${
+                      rimY - 22
+                    }
                     `}
                     stroke={COLOR.filament}
                     strokeWidth={2.8}
@@ -600,7 +630,10 @@ export default function LightSwitch() {
         {/* ===== Dev FAB / Dev Menu (only when DEBUG) ===== */}
         {DEBUG && (
           <>
-            <TouchableOpacity onPress={() => setDebugOpen(true)} style={styles.devFab}>
+            <TouchableOpacity
+              onPress={() => setDebugOpen(true)}
+              style={styles.devFab}
+            >
               <Text style={{ color: "#111", fontWeight: "700" }}>⚙️</Text>
             </TouchableOpacity>
 
@@ -621,8 +654,11 @@ export default function LightSwitch() {
                     </TouchableOpacity>
                   </View>
 
-                  {row("Dome Top Y", domeTopY, () => setDomeTopY((v) => v - 2), () =>
-                    setDomeTopY((v) => v + 2)
+                  {row(
+                    "Dome Top Y",
+                    domeTopY,
+                    () => setDomeTopY((v) => v - 2),
+                    () => setDomeTopY((v) => v + 2)
                   )}
                   {row("Rim Y", rimY, () => setRimY((v) => v - 2), () =>
                     setRimY((v) => v + 2)
@@ -630,14 +666,22 @@ export default function LightSwitch() {
                   {row(
                     "Rim Left %",
                     rimLeftPct,
-                    () => setRimLeftPct((v) => Math.max(0.05, +(v - 0.02).toFixed(2))),
-                    () => setRimLeftPct((v) => Math.min(0.45, +(v + 0.02).toFixed(2)))
+                    () => setRimLeftPct((v) =>
+                      Math.max(0.05, +(v - 0.02).toFixed(2))
+                    ),
+                    () => setRimLeftPct((v) =>
+                      Math.min(0.45, +(v + 0.02).toFixed(2))
+                    )
                   )}
                   {row(
                     "Rim Right %",
                     rimRightPct,
-                    () => setRimRightPct((v) => Math.max(0.55, +(v - 0.02).toFixed(2))),
-                    () => setRimRightPct((v) => Math.min(0.95, +(v + 0.02).toFixed(2)))
+                    () => setRimRightPct((v) =>
+                      Math.max(0.55, +(v - 0.02).toFixed(2))
+                    ),
+                    () => setRimRightPct((v) =>
+                      Math.min(0.95, +(v + 0.02).toFixed(2))
+                    )
                   )}
                   {row(
                     "Rim Inset",
@@ -668,14 +712,26 @@ export default function LightSwitch() {
                   {row(
                     "Pool Width",
                     POOL_WIDTH_FACTOR,
-                    () => setPOOL_WIDTH_FACTOR((v) => +(Math.max(0.6, v - 0.02)).toFixed(2)),
-                    () => setPOOL_WIDTH_FACTOR((v) => +(Math.min(1.0, v + 0.02)).toFixed(2))
+                    () =>
+                      setPOOL_WIDTH_FACTOR((v) =>
+                        +(Math.max(0.6, v - 0.02)).toFixed(2)
+                      ),
+                    () =>
+                      setPOOL_WIDTH_FACTOR((v) =>
+                        +(Math.min(1.0, v + 0.02)).toFixed(2)
+                      )
                   )}
                   {row(
                     "Pool RX",
                     POOL_RX_FACTOR,
-                    () => setPOOL_RX_FACTOR((v) => +(Math.max(0.2, v - 0.02)).toFixed(2)),
-                    () => setPOOL_RX_FACTOR((v) => +(Math.min(0.6, v + 0.02)).toFixed(2))
+                    () =>
+                      setPOOL_RX_FACTOR((v) =>
+                        +(Math.max(0.2, v - 0.02)).toFixed(2)
+                      ),
+                    () =>
+                      setPOOL_RX_FACTOR((v) =>
+                        +(Math.min(0.6, v + 0.02)).toFixed(2)
+                      )
                   )}
                   {row(
                     "Pool RY",
@@ -688,7 +744,10 @@ export default function LightSwitch() {
                   )}
 
                   <View style={styles.devFooter}>
-                    <TouchableOpacity style={styles.devBtn} onPress={() => setDebugOpen(false)}>
+                    <TouchableOpacity
+                      style={styles.devBtn}
+                      onPress={() => setDebugOpen(false)}
+                    >
                       <Text style={styles.devBtnTxt}>Close</Text>
                     </TouchableOpacity>
                     <TouchableOpacity

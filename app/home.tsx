@@ -3,9 +3,10 @@
 // ✅ Shell-standard wiring: Settings icon works (useSettingsUI) + useCallback
 // ✅ Keeps ALL 6 games (FULL PRODUCT)
 // ✅ No carousel layout/animation changes
-// ✅ No refactors beyond the needed parity wiring
+// ✅ Bug Fix: single-tap entry responsiveness + stronger haptics
+// ✅ Layout Fix: restore centered snap with peeking neighbors using snapToOffsets
 
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -131,6 +132,7 @@ function FidgetCard({
       activeOpacity={0.9}
       onPress={onPress}
       style={{ width: cardWidth, marginHorizontal: SPACING / 2 }}
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
     >
       <Animated.View style={[styles.card, haloStyle, animatedStyle]}>
         <LinearGradient
@@ -152,7 +154,9 @@ function HomeInner() {
   const { openSettings } = useSettingsUI();
 
   const scrollX = useSharedValue(0);
-  const lastTap = useSharedValue(0);
+
+  // Tap debounce
+  const lastTapRef = useRef(0);
 
   const [carouselW, setCarouselW] = useState(SCREEN_W);
 
@@ -168,6 +172,11 @@ function HomeInner() {
   useEffect(() => {
     intervalSV.value = ITEM_INTERVAL;
   }, [ITEM_INTERVAL, intervalSV]);
+
+  // ✅ Explicit snap offsets (restores centered snap + peeking neighbors)
+  const snapOffsets = useMemo(() => {
+    return fidgets.map((_, i) => i * ITEM_INTERVAL);
+  }, [ITEM_INTERVAL]);
 
   useEffect(() => {
     (async () => {
@@ -198,23 +207,29 @@ function HomeInner() {
 
   const progress = useDerivedValue(() => scrollX.value / intervalSV.value);
 
-  const handleTap = async (route: string) => {
-    const now = Date.now();
-    if (now - lastTap.value < 250) return;
-    lastTap.value = now;
+  // ✅ Single-tap entry feel:
+  // - Navigate immediately
+  // - Fire stronger haptics after (do not await)
+  const handleTap = useCallback(
+    (route: string) => {
+      const now = Date.now();
+      if (now - lastTapRef.current < 250) return;
+      lastTapRef.current = now;
 
+      GlobalSoundManager.stopAll();
+      routerHook.push(route);
+
+      // More pronounced haptic
+      try {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+      } catch {}
+    },
+    [routerHook]
+  );
+
+  const handleOpenSettings = useCallback(() => {
     try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch {}
-
-    GlobalSoundManager.stopAll();
-    routerHook.push(route);
-  };
-
-  // ✅ Shell-standard Settings behavior
-  const handleOpenSettings = useCallback(async () => {
-    try {
-      await Haptics.selectionAsync();
+      void Haptics.selectionAsync();
     } catch {}
     openSettings();
   }, [openSettings]);
@@ -229,7 +244,6 @@ function HomeInner() {
         style={StyleSheet.absoluteFill}
       />
 
-      {/* Header (updated only for Settings wiring + accessibility) */}
       <PremiumHeader
         left={<View />}
         center={
@@ -258,7 +272,6 @@ function HomeInner() {
       {/* Stage */}
       <View style={styles.stageWrap}>
         <PremiumStage>
-          {/* Stage fill (3-stop gradient) */}
           <LinearGradient
             colors={[
               "rgba(10,28,52,0.58)",
@@ -271,7 +284,6 @@ function HomeInner() {
             style={StyleSheet.absoluteFill}
           />
 
-          {/* Stage sheen overlay */}
           <LinearGradient
             colors={[
               "rgba(255,255,255,0.08)",
@@ -303,9 +315,17 @@ function HomeInner() {
               keyExtractor={(item) => item.id}
               horizontal
               showsHorizontalScrollIndicator={false}
-              snapToInterval={ITEM_INTERVAL}
+
+              // ✅ Restore centered snap behavior
+              snapToOffsets={snapOffsets}
+              snapToAlignment="start"
+
               decelerationRate="fast"
               bounces={false}
+
+              // ✅ Keeps the better tap feel while still snapping correctly
+              disableIntervalMomentum
+
               contentContainerStyle={{
                 paddingHorizontal: PADDING_H,
                 alignItems: "center",
@@ -325,7 +345,6 @@ function HomeInner() {
             />
           </View>
 
-          {/* Dots */}
           <View style={styles.dotsWrap}>
             {fidgets.map((_, i) => {
               const animatedDot = useAnimatedStyle(() => {

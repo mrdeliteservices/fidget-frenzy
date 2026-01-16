@@ -92,14 +92,31 @@ function SpinnerInner({ setResetHandler }: SpinnerInnerProps) {
   const whooshRef = useRef<Audio.Sound | null>(null);
   const whooshPlaying = useRef(false);
 
+  // ✅ NEW: Ensure iOS audio session is configured in standalone/TestFlight builds.
+  // This prevents the "first run has no sound" behavior.
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: false,
+          playsInSilentModeIOS: true, // key for iOS silent switch + first-run reliability
+          staysActiveInBackground: false,
+          shouldDuckAndroid: true,
+          playThroughEarpieceAndroid: false,
+        });
+      } catch {
+        // silent
+      }
+
+      if (cancelled) return;
+
+      // Now load the whoosh after the mode is set
+      try {
         const { sound } = await Audio.Sound.createAsync(
           require("../../assets/sounds/whoosh-1.mp3"),
-          { isLooping: false, volume: 1.0 }
+          { isLooping: false, volume: 1.0, shouldPlay: false }
         );
 
         if (!cancelled) {

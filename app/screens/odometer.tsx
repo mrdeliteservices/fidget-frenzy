@@ -7,6 +7,7 @@
 // ✅ Stage cap removal uses PremiumStage showShine={false} (no overpaint hack)
 // ✅ Stage surface set to solid Gears-top gray so tire doesn’t get swallowed
 // ✅ Migrated to shell-standard Settings (useSettingsUI) + global sound toggle
+// ✅ FIX: wire Settings -> Reset via FullscreenWrapper onReset
 // NOTE: No refactors/cleanup beyond UI + Settings wiring.
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -42,6 +43,7 @@ import {
   fadeOutAndStop,
   GlobalSoundManager,
 } from "../../lib/soundManager";
+import { APP_IDENTITY } from "../../constants/appIdentity";
 
 // ✅ Shell-standard Settings hook
 import { useSettingsUI } from "../../components/SettingsUIProvider";
@@ -210,7 +212,8 @@ const clamp = (v: number, lo: number, hi: number) => {
 export default function OdometerScreen() {
   // ✅ shell settings (global)
   const settings = useSettingsUI();
-  const soundEnabled = (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
+  const soundEnabled =
+    (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
   const openSettings =
     (settings as any).openSettings ??
     (settings as any).showSettings ??
@@ -271,7 +274,8 @@ export default function OdometerScreen() {
     }, [stopAllOdometerAudio])
   );
 
-  useEffect(() => {
+  // ✅ Start position: bottom-most track point
+  const seedStartPosition = useCallback(() => {
     let maxY = -999;
     let idx = 0;
 
@@ -283,7 +287,11 @@ export default function OdometerScreen() {
     });
 
     lapProgress.value = idx / TRACK_N;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [lapProgress]);
+
+  useEffect(() => {
+    seedStartPosition();
+  }, [seedStartPosition]);
 
   useEffect(() => {
     preloadSounds({
@@ -333,6 +341,68 @@ export default function OdometerScreen() {
   };
 
   const updateMileage = (v: number) => setMileage(v);
+
+  // ✅ Reset (wired to Settings)
+  const reset = useCallback(() => {
+    // stop audio hard
+    stopAllOdometerAudio();
+
+    // reset UI mileage
+    setMileage(0);
+
+    // reset physics/state
+    tireAngle.value = 0;
+    tireOmega.value = 0;
+
+    totalMiles.value = 0;
+    lastMileageInt.value = 0;
+
+    isDragging.value = false;
+    dragLastTouchAngle.value = 0;
+
+    lastStableDir.value = 1;
+    lastDragDir.value = 0;
+
+    dragDirStable.value = 1;
+
+    brakeLatch.value = false;
+    isBraking.value = false;
+    brakeStartSpeed.value = 0;
+    brakeElapsed.value = 0;
+
+    carSpeed.value = 0;
+    carDirection.value = 1;
+
+    engineAudioOn.value = 0;
+
+    lastImpulseMs.value = 0;
+    lastHapticMs.value = 0;
+
+    // put car back at canonical start location
+    seedStartPosition();
+  }, [
+    stopAllOdometerAudio,
+    seedStartPosition,
+    tireAngle,
+    tireOmega,
+    totalMiles,
+    lastMileageInt,
+    isDragging,
+    dragLastTouchAngle,
+    lastStableDir,
+    lastDragDir,
+    dragDirStable,
+    brakeLatch,
+    isBraking,
+    brakeStartSpeed,
+    brakeElapsed,
+    carSpeed,
+    carDirection,
+    engineAudioOn,
+    lastImpulseMs,
+    lastHapticMs,
+    lapProgress,
+  ]);
 
   useFrameCallback((frame: FrameInfo) => {
     "worklet";
@@ -447,7 +517,8 @@ export default function OdometerScreen() {
       lastDragDir.value = 0;
 
       // ✅ Seed stable drag direction (prevents immediate heading flicker)
-      const seedDir = carDirection.value !== 0 ? carDirection.value : lastStableDir.value;
+      const seedDir =
+        carDirection.value !== 0 ? carDirection.value : lastStableDir.value;
       dragDirStable.value = seedDir;
       carDirection.value = seedDir;
     })
@@ -533,7 +604,10 @@ export default function OdometerScreen() {
 
       let nextOmega = clamp(cur + omegaDeg, -CONFIG.MAX_OMEGA, CONFIG.MAX_OMEGA);
 
-      if (curAbs > REVERSAL_MIN_CURRENT_OMEGA && Math.sign(nextOmega) !== Math.sign(cur)) {
+      if (
+        curAbs > REVERSAL_MIN_CURRENT_OMEGA &&
+        Math.sign(nextOmega) !== Math.sign(cur)
+      ) {
         const required = curAbs * REVERSAL_ALLOW_RATIO + REVERSAL_ALLOW_BONUS;
         if (Math.abs(omegaDeg) < required) {
           nextOmega = clamp(cur + omegaDeg * 0.25, -CONFIG.MAX_OMEGA, CONFIG.MAX_OMEGA);
@@ -545,7 +619,7 @@ export default function OdometerScreen() {
 
       if (nowMs - lastHapticMs.value > HAPTIC_COOLDOWN_MS) {
         lastHapticMs.value = nowMs;
-        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Medium);
+        runOnJS(Haptics.impactAsync)(Haptics.ImpactFeedbackStyle.Heavy);
       }
 
       runOnJS(handleSpinEnd)(nextOmega);
@@ -631,7 +705,7 @@ export default function OdometerScreen() {
   const formattedMileage = mileage.toString().padStart(6, "0");
 
   return (
-    <FullscreenWrapper>
+    <FullscreenWrapper appName={APP_IDENTITY.displayName} onReset={reset}>
       <View style={styles.root}>
         <SafeAreaView style={styles.safe}>
           <LinearGradient

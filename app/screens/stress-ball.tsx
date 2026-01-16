@@ -1,8 +1,12 @@
+// app/screens/stress-ball.tsx
 // Fidget Frenzy – Stress Ball v0.9-dev unified
 // Expo SDK 54 / RN 0.81
 // ✅ Shell-standard Settings sound toggle (no local SettingsModal)
 // ✅ Reliable pooled SFX playback (Expo Go rapid triggers safe)
 // ✅ soundEnabledRef + useCallback to avoid stale closures from gestures
+// ✅ FIX: wire Settings -> Reset via FullscreenWrapper onReset
+// ✅ Reset clears animations, state, timers, and stops audio
+// ✅ FIX: Reset shield prevents late explosion callback from re-firing SFX + +1 counter
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, StyleSheet, Dimensions, SafeAreaView } from "react-native";
@@ -28,6 +32,10 @@ import BackButton from "../../components/BackButton";
 import PremiumStage from "../../components/PremiumStage";
 import GameHeader from "../../components/GameHeader";
 import { frenzyTheme as t } from "../theme/frenzyTheme";
+import { APP_IDENTITY } from "../../constants/appIdentity";
+
+// ✅ Global sound manager (for Reset)
+import { GlobalSoundManager } from "../../lib/soundManager";
 
 // ✅ Shell-standard Settings hook
 import { useSettingsUI } from "../../components/SettingsUIProvider";
@@ -198,8 +206,8 @@ export default function StressBallScreen() {
   // ✅ shell settings
   const settings = useSettingsUI();
 
-  // Most likely:
-  const soundEnabled = (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
+  const soundEnabled =
+    (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
   const openSettings =
     (settings as any).openSettings ??
     (settings as any).showSettings ??
@@ -227,6 +235,9 @@ export default function StressBallScreen() {
 
   // Delay timer for palette swap after explosion flash
   const paletteSwapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ✅ Reset shield timer (prevents late explosion callback from re-firing)
+  const resetShieldTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ✅ pooled SFX
   const squishPoolRef = useRef<SoundPool | null>(null);
@@ -319,7 +330,9 @@ export default function StressBallScreen() {
         // seed bag
         lastPaletteRef.current = 0;
         bagRef.current = shuffle(
-          Array.from({ length: BALL_PALETTES.length }, (_, i) => i).filter((i) => i !== 0)
+          Array.from({ length: BALL_PALETTES.length }, (_, i) => i).filter(
+            (i) => i !== 0
+          )
         );
 
         // build pools
@@ -370,6 +383,11 @@ export default function StressBallScreen() {
       if (paletteSwapTimerRef.current) {
         clearTimeout(paletteSwapTimerRef.current);
         paletteSwapTimerRef.current = null;
+      }
+
+      if (resetShieldTimerRef.current) {
+        clearTimeout(resetShieldTimerRef.current);
+        resetShieldTimerRef.current = null;
       }
 
       (async () => {
@@ -439,6 +457,7 @@ export default function StressBallScreen() {
   );
 
   const runExplosionFX = useCallback(async () => {
+    // ✅ Reset shield: block any late calls after user hits Reset
     if (didExplodeRef.current) return;
 
     didExplodeRef.current = true;
@@ -543,8 +562,6 @@ export default function StressBallScreen() {
     didDragHapticRef.current = false;
   };
 
-  const reset = () => setPressCount(0);
-
   useAnimatedReaction(
     () => {
       const p = pressure.value;
@@ -568,6 +585,108 @@ export default function StressBallScreen() {
       if (v !== prev) runOnJS(runExplosionFX)();
     }
   );
+
+  // ---------------------------
+  // Reset wiring (Settings -> Reset)
+  // ---------------------------
+  const handleReset = useCallback(() => {
+    // ✅ Reset shield ON (blocks any late explosion callback)
+    didExplodeRef.current = true;
+    if (resetShieldTimerRef.current) clearTimeout(resetShieldTimerRef.current);
+    resetShieldTimerRef.current = setTimeout(() => {
+      didExplodeRef.current = false;
+      resetShieldTimerRef.current = null;
+    }, 350);
+
+    // timers
+    if (paletteSwapTimerRef.current) {
+      clearTimeout(paletteSwapTimerRef.current);
+      paletteSwapTimerRef.current = null;
+    }
+
+    // JS state + counters
+    setPressCount(0);
+    setPaletteIndex(0);
+
+    // palette drift bag
+    bagRef.current = [];
+    lastPaletteRef.current = 0;
+
+    // explosion seq
+    popSeqRef.current = 0;
+
+    // JS flags
+    isPressuringRef.current = false;
+    didDragHapticRef.current = false;
+
+    // stop any playing audio (global + local pools)
+    GlobalSoundManager.stopAll().catch(() => {});
+
+    const stopPoolNow = (pool: SoundPool | null) => {
+      if (!pool) return;
+      pool.sounds.forEach((s) => {
+        try {
+          s.stopAsync().catch(() => {});
+          s.setPositionAsync(0).catch(() => {});
+        } catch {}
+      });
+    };
+
+    stopPoolNow(squishPoolRef.current);
+    stopPoolNow(popPoolRef.current);
+    stopPoolNow(bubblePoolRef.current);
+    balloonPoolsRef.current.forEach((p) => stopPoolNow(p));
+
+    // cancel & reset animations/shared values
+    cancelAnimation(scale);
+    cancelAnimation(pressure);
+    cancelAnimation(pulse);
+    cancelAnimation(explosion);
+    cancelAnimation(dragX);
+    cancelAnimation(dragY);
+
+    scale.value = 1;
+    pressure.value = 0;
+    pulse.value = 1;
+    explosion.value = 0;
+    pressureStep.value = 0;
+
+    // ✅ clear queued explosion reaction source
+    explosionTrigger.value = 0;
+
+    dragX.value = 0;
+    dragY.value = 0;
+
+    isPressuringSV.value = 0;
+    wasClampedSV.value = false;
+    lastWallTickTs.value = 0;
+    dragCountsSV.value = false;
+
+    // restart idle pulse if enabled
+    if (IDLE_PULSE_ON) {
+      pulse.value = withRepeat(
+        withSequence(
+          withSpring(1.02, { stiffness: 55, damping: 12 }),
+          withSpring(0.98, { stiffness: 55, damping: 12 })
+        ),
+        -1,
+        true
+      );
+    }
+  }, [
+    dragCountsSV,
+    dragX,
+    dragY,
+    explosion,
+    explosionTrigger,
+    isPressuringSV,
+    lastWallTickTs,
+    pressure,
+    pressureStep,
+    pulse,
+    scale,
+    wasClampedSV,
+  ]);
 
   // ---------------------------
   // Animated styles (WORKLET-SAFE)
@@ -614,7 +733,8 @@ export default function StressBallScreen() {
     const maxContainedScale = Math.max(1, Math.min(maxScaleX, maxScaleY));
 
     const inflate =
-      PRESSURE_INFLATE_MIN + (maxContainedScale - PRESSURE_INFLATE_MIN) * pressure.value;
+      PRESSURE_INFLATE_MIN +
+      (maxContainedScale - PRESSURE_INFLATE_MIN) * pressure.value;
 
     const deformXPressure = 1 + (PRESSURE_DEFORM_X_MAX - 1) * pressure.value;
     const deformYPressure = 1 + (PRESSURE_DEFORM_Y_MIN - 1) * pressure.value;
@@ -640,8 +760,10 @@ export default function StressBallScreen() {
     const biasX = ax / denom;
     const biasY = 1 - biasX;
 
-    const dragScaleX = 1 + (dragStretch - 1) * biasX + (dragSquash - 1) * biasY;
-    const dragScaleY = 1 + (dragStretch - 1) * biasY + (dragSquash - 1) * biasX;
+    const dragScaleX =
+      1 + (dragStretch - 1) * biasX + (dragSquash - 1) * biasY;
+    const dragScaleY =
+      1 + (dragStretch - 1) * biasY + (dragSquash - 1) * biasX;
 
     const explodeKick = 1 + (EXPLOSION_KICK - 1) * explosion.value;
 
@@ -770,7 +892,7 @@ export default function StressBallScreen() {
   const [h1, h2, h3] = BALL_HEAT_PALETTES[paletteIndex] ?? BALL_HEAT_PALETTES[0];
 
   return (
-    <FullscreenWrapper>
+    <FullscreenWrapper appName={APP_IDENTITY.displayName} onReset={handleReset}>
       <View style={styles.root}>
         <SafeAreaView style={styles.safe}>
           <LinearGradient
@@ -791,7 +913,10 @@ export default function StressBallScreen() {
 
           <View style={styles.stageWrap}>
             <View style={styles.stageShell}>
-              <PremiumStage showShine={false} style={{ backgroundColor: STRESS_STAGE_SURFACE }}>
+              <PremiumStage
+                showShine={false}
+                style={{ backgroundColor: STRESS_STAGE_SURFACE }}
+              >
                 <View
                   style={styles.content}
                   onLayout={(e) => {
