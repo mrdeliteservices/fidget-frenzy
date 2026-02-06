@@ -5,6 +5,7 @@
 // ✅ No carousel layout/animation changes
 // ✅ Bug Fix: single-tap entry responsiveness + stronger haptics
 // ✅ Layout Fix: restore centered snap with peeking neighbors using snapToOffsets
+// ✅ NO direct expo-haptics usage (uses SettingsUIProvider canonical haptic())
 
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import {
@@ -25,7 +26,6 @@ import Animated, {
 } from "react-native-reanimated";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter } from "expo-router";
-import * as Haptics from "expo-haptics";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 
@@ -151,7 +151,7 @@ function FidgetCard({
 
 function HomeInner() {
   const routerHook = useRouter();
-  const { openSettings } = useSettingsUI();
+  const { openSettings, haptic } = useSettingsUI();
 
   const scrollX = useSharedValue(0);
 
@@ -219,20 +219,16 @@ function HomeInner() {
       GlobalSoundManager.stopAll();
       routerHook.push(route);
 
-      // More pronounced haptic
-      try {
-        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-      } catch {}
+      // More pronounced haptic (respects Settings toggle)
+      haptic("heavy");
     },
-    [routerHook]
+    [routerHook, haptic]
   );
 
   const handleOpenSettings = useCallback(() => {
-    try {
-      void Haptics.selectionAsync();
-    } catch {}
+    haptic("selection");
     openSettings();
-  }, [openSettings]);
+  }, [openSettings, haptic]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -315,17 +311,13 @@ function HomeInner() {
               keyExtractor={(item) => item.id}
               horizontal
               showsHorizontalScrollIndicator={false}
-
               // ✅ Restore centered snap behavior
               snapToOffsets={snapOffsets}
               snapToAlignment="start"
-
               decelerationRate="fast"
               bounces={false}
-
               // ✅ Keeps the better tap feel while still snapping correctly
               disableIntervalMomentum
-
               contentContainerStyle={{
                 paddingHorizontal: PADDING_H,
                 alignItems: "center",

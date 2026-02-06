@@ -23,7 +23,6 @@ import Animated, {
   withRepeat,
   withSequence,
 } from "react-native-reanimated";
-import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Audio } from "expo-av";
 
@@ -37,7 +36,7 @@ import { APP_IDENTITY } from "../../constants/appIdentity";
 // ✅ Global sound manager (for Reset)
 import { GlobalSoundManager } from "../../lib/soundManager";
 
-// ✅ Shell-standard Settings hook
+// ✅ Shell-standard Settings hook (canonical haptic())
 import { useSettingsUI } from "../../components/SettingsUIProvider";
 
 const { width: W } = Dimensions.get("window");
@@ -203,22 +202,14 @@ async function playFromPool(pool: SoundPool | null) {
 }
 
 export default function StressBallScreen() {
-  // ✅ shell settings
-  const settings = useSettingsUI();
-
-  const soundEnabled =
-    (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
-  const openSettings =
-    (settings as any).openSettings ??
-    (settings as any).showSettings ??
-    (settings as any).openSettingsModal ??
-    (() => {});
+  // ✅ shell settings (canonical)
+  const { soundOn, openSettings, haptic } = useSettingsUI();
 
   // ✅ keep latest sound state for gesture callbacks
-  const soundEnabledRef = useRef<boolean>(!!soundEnabled);
+  const soundEnabledRef = useRef<boolean>(!!soundOn);
   useEffect(() => {
-    soundEnabledRef.current = !!soundEnabled;
-  }, [soundEnabled]);
+    soundEnabledRef.current = !!soundOn;
+  }, [soundOn]);
 
   const [pressCount, setPressCount] = useState(0);
   const [paletteIndex, setPaletteIndex] = useState(0);
@@ -295,7 +286,7 @@ export default function StressBallScreen() {
 
   // ✅ JS haptic for wall tick (called via runOnJS)
   const wallTick = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    haptic("light");
   };
 
   const playSfx = useCallback(async (kind: "squish" | "pop" | "bubble") => {
@@ -419,19 +410,15 @@ export default function StressBallScreen() {
     scale.value = withSpring(TAP_SQUISH, { stiffness: 170, damping: 12 });
 
     await playSfx("squish");
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch {}
+    haptic("medium");
 
     setPressCount((p) => p + 1);
 
     await playSfx("pop");
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
+    haptic("light");
 
     bumpBackToRest();
-  }, [playSfx, scale]);
+  }, [haptic, playSfx, scale]);
 
   const stepFX = useCallback(
     async (step: number) => {
@@ -440,20 +427,20 @@ export default function StressBallScreen() {
 
       try {
         if (step === 1) {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          haptic("light");
           await playSfx("squish");
         } else if (step === 2) {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          haptic("medium");
           await playSfx("bubble");
         } else if (step === 3) {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          haptic("heavy");
           await playSfx("squish");
         } else if (step === 4) {
-          await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+          haptic("heavy");
         }
       } catch {}
     },
-    [playSfx]
+    [haptic, playSfx]
   );
 
   const runExplosionFX = useCallback(async () => {
@@ -465,9 +452,7 @@ export default function StressBallScreen() {
 
     await playBalloonPopSeq();
 
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    } catch {}
+    haptic("heavy");
 
     if (paletteSwapTimerRef.current) clearTimeout(paletteSwapTimerRef.current);
     paletteSwapTimerRef.current = setTimeout(() => {
@@ -483,7 +468,7 @@ export default function StressBallScreen() {
     setTimeout(() => {
       didExplodeRef.current = false;
     }, 0);
-  }, [isPressuringSV, playBalloonPopSeq]);
+  }, [haptic, isPressuringSV, playBalloonPopSeq]);
 
   const onPressureStart = useCallback(async () => {
     isPressuringRef.current = true;
@@ -498,9 +483,7 @@ export default function StressBallScreen() {
     explosion.value = 0;
 
     await playSfx("bubble");
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch {}
+    haptic("medium");
 
     pressure.value = withTiming(
       1,
@@ -521,7 +504,7 @@ export default function StressBallScreen() {
         pressureStep.value = 0;
       }
     );
-  }, [explosion, explosionTrigger, isPressuringSV, playSfx, pressure, pressureStep, scale]);
+  }, [explosion, explosionTrigger, haptic, isPressuringSV, playSfx, pressure, pressureStep, scale]);
 
   const onPressureRelease = useCallback(async () => {
     if (didExplodeRef.current) {
@@ -537,9 +520,7 @@ export default function StressBallScreen() {
     pressureStep.value = 0;
 
     await playSfx("pop");
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    } catch {}
+    haptic("heavy");
 
     bumpBackToRest();
 
@@ -547,15 +528,13 @@ export default function StressBallScreen() {
       isPressuringRef.current = false;
       isPressuringSV.value = 0;
     }, 60);
-  }, [isPressuringSV, playSfx, pressure, pressureStep]);
+  }, [haptic, isPressuringSV, playSfx, pressure, pressureStep]);
 
   const onDragBeginJS = async () => {
     if (isPressuringRef.current) return;
     if (didDragHapticRef.current) return;
     didDragHapticRef.current = true;
-    try {
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch {}
+    haptic("light");
   };
 
   const onDragFinalizeJS = () => {

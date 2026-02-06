@@ -6,6 +6,7 @@
 // ✅ Pool is unloaded on unmount (prevents leaks)
 // ✅ toggle() no longer drops taps while animating and uses a faster 160ms animation.
 // ✅ FIX: wire Settings -> Reset via FullscreenWrapper onReset
+// ✅ Haptics routed through SettingsUIProvider haptic() helper (no direct expo-haptics import)
 // Visual polish preserved:
 //  - Contrast pass, plate tone, ON travel pressed IN
 // No layout / geometry changes.
@@ -23,7 +24,6 @@ import {
   Dimensions,
   Modal,
 } from "react-native";
-import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
 import Svg, {
   Path,
@@ -43,7 +43,7 @@ import BackButton from "../../components/BackButton";
 import GameHeader from "../../components/GameHeader";
 import { APP_IDENTITY } from "../../constants/appIdentity";
 
-// ✅ Shell-standard Settings hook
+// ✅ Shell-standard Settings hook (canonical haptic())
 import { useSettingsUI } from "../../components/SettingsUIProvider";
 
 const { width: W, height: H } = Dimensions.get("window");
@@ -91,23 +91,14 @@ const CEILING_H = 10;
 const CEILING_MARGIN_B = 4;
 
 export default function LightSwitch() {
-  // ✅ shell settings
-  const settings = useSettingsUI();
-
-  // Most likely names; fallback to avoid breaking if your hook uses different keys.
-  const soundEnabled =
-    (settings as any).soundEnabled ?? (settings as any).soundOn ?? true;
-  const openSettings =
-    (settings as any).openSettings ??
-    (settings as any).showSettings ??
-    (settings as any).openSettingsModal ??
-    (() => {});
+  // ✅ shell settings (canonical)
+  const { soundOn, openSettings, haptic } = useSettingsUI();
 
   // ✅ keep latest sound state for async click playback (closure-proof)
-  const soundEnabledRef = useRef<boolean>(!!soundEnabled);
+  const soundEnabledRef = useRef<boolean>(!!soundOn);
   useEffect(() => {
-    soundEnabledRef.current = !!soundEnabled;
-  }, [soundEnabled]);
+    soundEnabledRef.current = !!soundOn;
+  }, [soundOn]);
 
   const [isOn, setIsOn] = useState(false);
   const [count, setCount] = useState(0);
@@ -274,8 +265,8 @@ export default function LightSwitch() {
     setIsOn(next);
     setCount((c) => c + 1);
 
-    // Fire-and-forget haptics + sound
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy).catch(() => {});
+    // Fire-and-forget haptics + sound (haptics respects Settings toggle)
+    haptic("heavy");
     playRapidClick();
 
     animatingRef.current = true;

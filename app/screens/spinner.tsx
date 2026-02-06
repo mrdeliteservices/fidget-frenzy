@@ -14,12 +14,13 @@ import Animated, {
   FrameInfo,
 } from "react-native-reanimated";
 import { Audio } from "expo-av";
-import * as Haptics from "expo-haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import BackButton from "../../components/BackButton";
-import FullscreenWrapper, { useSettingsUI } from "../../components/FullscreenWrapper";
+import FullscreenWrapper, {
+  useSettingsUI,
+} from "../../components/FullscreenWrapper";
 import GameHeader from "../../components/GameHeader";
 import { GlobalSoundManager } from "../../lib/soundManager";
 import { APP_IDENTITY } from "../../constants/appIdentity";
@@ -45,7 +46,7 @@ type SpinnerInnerProps = {
 
 function SpinnerInner({ setResetHandler }: SpinnerInnerProps) {
   const insets = useSafeAreaInsets();
-  const { soundOn, openSettings } = useSettingsUI();
+  const { soundOn, openSettings, haptic } = useSettingsUI();
 
   // motion state
   const angle = useSharedValue(0);
@@ -182,9 +183,10 @@ function SpinnerInner({ setResetHandler }: SpinnerInnerProps) {
     }
   };
 
-  const triggerHaptic = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-  };
+  // ✅ Canonical haptic trigger (respects the Settings toggle)
+  const triggerHaptic = useCallback(() => {
+    haptic("medium");
+  }, [haptic]);
 
   // ---------- Layout ----------
   const onBodyLayout = () => {

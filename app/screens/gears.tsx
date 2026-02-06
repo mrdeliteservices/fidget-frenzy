@@ -72,6 +72,11 @@ const DRAG_IDLE_STOP_MS = 200;
 const MOVE_THRESHOLD = 18;
 const LONG_PRESS_MS = 450;
 
+// ✅ Haptics cadence
+// Smaller number = more frequent impacts
+const HAPTIC_TURNS_STEP = 0.12; // stronger than 0.18 (more “teeth”)
+const UNWIND_HAPTIC_POLL_MS = 24; // ~40hz polling during unwind
+
 function normalizeDeltaRad(delta: number) {
   "worklet";
   const PI2 = Math.PI * 2;
@@ -86,7 +91,6 @@ function turnsFromDeltaRad(dA: number) {
   return (dA / (Math.PI * 2)) * WIND_SENSITIVITY;
 }
 
-// ✅ Worklet-safe clamp (DO NOT call plain JS helpers from worklets)
 function clampWorklet(n: number, lo: number, hi: number) {
   "worklet";
   return Math.max(lo, Math.min(hi, n));
@@ -104,7 +108,7 @@ function FollowerGear({
 }) {
   const rotateDeg = useDerivedValue(() => {
     const signedMult = g.mult * directionSV.value;
-    const turns = spinTurns.value * signedMult; // turns (can be negative)
+    const turns = spinTurns.value * signedMult;
     return `${turns * 360}deg`;
   });
 
@@ -131,8 +135,7 @@ function FollowerGear({
 }
 
 export default function Gears() {
-  // ✅ Shell settings (matches your naming style)
-  const { soundOn, openSettings } = useSettingsUI();
+  const { soundOn, openSettings, haptic } = useSettingsUI();
   const soundOnRef = useRef(soundOn);
 
   useEffect(() => {
@@ -143,8 +146,8 @@ export default function Gears() {
   const modeRef = useRef<Mode>("idle");
 
   // UI-thread motion state (turns, unbounded)
-  const spinTurns = useSharedValue(0); // turns
-  const restTurns = useSharedValue(0); // unwind target baseline (captured on begin)
+  const spinTurns = useSharedValue(0);
+  const restTurns = useSharedValue(0);
   const directionSV = useSharedValue<1 | -1>(1);
 
   // drag state
@@ -152,10 +155,13 @@ export default function Gears() {
   const movedSV = useSharedValue(false);
 
   const dragStartTurns = useSharedValue(0);
-  const prevAngle = useSharedValue(0); // rad
+  const prevAngle = useSharedValue(0);
   const cumulativeTurns = useSharedValue(0);
 
-  // driver center in screen coords for atan2 (like Spinner)
+  // ✅ Haptics: track last turns we fired at (UI thread safe)
+  const lastHapticTurns = useSharedValue(0);
+
+  // driver center
   const centerX = useSharedValue(0);
   const centerY = useSharedValue(0);
 
@@ -170,10 +176,53 @@ export default function Gears() {
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const idleStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const setModeNow = useCallback((next: Mode) => {
-    modeRef.current = next;
-    setMode(next);
+  // ✅ Unwind haptics loop (JS)
+  const unwindHapticsTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+    null
+  );
+  const unwindLastTurnsRef = useRef(0);
+
+  const stopUnwindHaptics = useCallback(() => {
+    if (unwindHapticsTimerRef.current) {
+      clearInterval(unwindHapticsTimerRef.current);
+      unwindHapticsTimerRef.current = null;
+    }
   }, []);
+
+  const setModeNow = useCallback(
+    (next: Mode) => {
+      modeRef.current = next;
+      setMode(next);
+      if (next !== "unwinding") stopUnwindHaptics();
+    },
+    [stopUnwindHaptics]
+  );
+
+  const triggerGearHaptic = useCallback(() => {
+    try {
+      haptic("heavy");
+    } catch {}
+  }, [haptic]);
+
+  const startUnwindHaptics = useCallback(() => {
+    stopUnwindHaptics();
+    unwindLastTurnsRef.current = spinTurns.value;
+
+    unwindHapticsTimerRef.current = setInterval(() => {
+      if (modeRef.current !== "unwinding") {
+        stopUnwindHaptics();
+        return;
+      }
+
+      const cur = spinTurns.value;
+      const d = Math.abs(cur - unwindLastTurnsRef.current);
+
+      if (d >= HAPTIC_TURNS_STEP) {
+        unwindLastTurnsRef.current = cur;
+        triggerGearHaptic();
+      }
+    }, UNWIND_HAPTIC_POLL_MS);
+  }, [spinTurns, stopUnwindHaptics, triggerGearHaptic]);
 
   // ---- Audio ----
   const soundsRef = useRef<Record<SoundKey, Audio.Sound | null>>({
@@ -215,22 +264,15 @@ export default function Gears() {
     void safeStop("unwinding");
   }, [safeStop]);
 
-  // ✅ If sound gets disabled while we’re mid-loop, slam-stop immediately
   useEffect(() => {
     if (!soundOn) stopAllAudio();
   }, [soundOn, stopAllAudio]);
 
-  // ---- Audio load/unload ----
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
       try {
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-        });
-
         const winding = await Audio.Sound.createAsync(
           require("../../assets/sounds/gear-winding.mp3"),
           { shouldPlay: false, volume: 1.0 }
@@ -256,18 +298,18 @@ export default function Gears() {
       }
     })();
 
-    // start clean
     spinTurns.value = 0;
     restTurns.value = 0;
     directionSV.value = 1;
+    lastHapticTurns.value = 0;
     setDirection(1);
     setPower(0);
     setModeNow("idle");
 
     return () => {
       cancelled = true;
-
       stopAllAudio();
+      stopUnwindHaptics();
 
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
@@ -290,17 +332,22 @@ export default function Gears() {
         }
       })();
     };
-  }, [setModeNow, stopAllAudio, spinTurns, restTurns, directionSV]);
+  }, [
+    setModeNow,
+    stopAllAudio,
+    stopUnwindHaptics,
+    spinTurns,
+    restTurns,
+    directionSV,
+    lastHapticTurns,
+  ]);
 
-  // ---- Power meter (throttled via derived value) ----
-  // Power = tenths of a turn away from rest
+  // ---- Power meter ----
   const powerTenths = useDerivedValue(() => {
     const turnsAway = Math.abs(spinTurns.value - restTurns.value);
-    const p = Math.min(9999, Math.round(turnsAway * 10));
-    return p;
+    return Math.min(9999, Math.round(turnsAway * 10));
   });
 
-  // Throttle React updates to avoid unnecessary re-renders
   const powerThrottleRef = useRef({ lastTs: 0, lastP: -1 });
   useEffect(() => {
     const id = setInterval(() => {
@@ -323,12 +370,13 @@ export default function Gears() {
   // ---------------- Stage measurement ----------------
   const [stageSize, setStageSize] = useState({ w: 0, h: 0 });
 
-  // Center/bottom with slight left bias (right-handed use)
   const DRIVER_LEFT_BIAS_PX = -40;
   const DRIVER_BOTTOM_PAD_PX = 220;
 
-  const driverCenterX = stageSize.w > 0 ? stageSize.w / 2 + DRIVER_LEFT_BIAS_PX : 0;
-  const driverCenterY = stageSize.h > 0 ? stageSize.h - DRIVER_BOTTOM_PAD_PX : 0;
+  const driverCenterX =
+    stageSize.w > 0 ? stageSize.w / 2 + DRIVER_LEFT_BIAS_PX : 0;
+  const driverCenterY =
+    stageSize.h > 0 ? stageSize.h - DRIVER_BOTTOM_PAD_PX : 0;
 
   const measureDriverCenter = useCallback(() => {
     setTimeout(() => {
@@ -347,20 +395,43 @@ export default function Gears() {
 
   const BASE_ASSETS: GearAsset[] = useMemo(
     () => [
-      { id: "silver_large", source: require("../../assets/gears/gear_silver_large.png"), tier: "large" },
-      { id: "silver_medium", source: require("../../assets/gears/gear_silver_medium.png"), tier: "medium" },
-
-      { id: "silver_small", source: require("../../assets/gears/gear_silver_small.png"), tier: "small" },
-      { id: "gunmetal_small", source: require("../../assets/gears/gear_gunmetal_small.png"), tier: "small" },
-      { id: "dark_small", source: require("../../assets/gears/gear_dark_small.png"), tier: "small" },
-      { id: "bright_small", source: require("../../assets/gears/gear_bright_small.png"), tier: "small" },
+      {
+        id: "silver_large",
+        source: require("../../assets/gears/gear_silver_large.png"),
+        tier: "large",
+      },
+      {
+        id: "silver_medium",
+        source: require("../../assets/gears/gear_silver_medium.png"),
+        tier: "medium",
+      },
+      {
+        id: "silver_small",
+        source: require("../../assets/gears/gear_silver_small.png"),
+        tier: "small",
+      },
+      {
+        id: "gunmetal_small",
+        source: require("../../assets/gears/gear_gunmetal_small.png"),
+        tier: "small",
+      },
+      {
+        id: "dark_small",
+        source: require("../../assets/gears/gear_dark_small.png"),
+        tier: "small",
+      },
+      {
+        id: "bright_small",
+        source: require("../../assets/gears/gear_bright_small.png"),
+        tier: "small",
+      },
     ],
     []
   );
 
-  // ---------------- Helpers ----------------
   const randomIn = (min: number, max: number) => min + Math.random() * (max - min);
-  const dist = (x1: number, y1: number, x2: number, y2: number) => Math.hypot(x1 - x2, y1 - y2);
+  const dist = (x1: number, y1: number, x2: number, y2: number) =>
+    Math.hypot(x1 - x2, y1 - y2);
 
   const pickFollowerSize = (tier: GearAsset["tier"]) => {
     if (tier === "large") return Math.round(randomIn(175, 205));
@@ -368,7 +439,6 @@ export default function Gears() {
     return Math.round(randomIn(90, 120));
   };
 
-  // ---------------- Random layout engine ----------------
   const [placed, setPlaced] = useState<PlacedGear[]>([]);
 
   const generateLayout = useCallback(
@@ -494,7 +564,6 @@ export default function Gears() {
     generateLayout(stageSize.w, stageSize.h);
   }, [generateLayout, stageSize.h, stageSize.w]);
 
-  // ---------------- Direction sync (React state + SharedValue) ----------------
   const reverseNow = useCallback(() => {
     if (modeRef.current === "dragging" || modeRef.current === "unwinding") return;
     setDirection((prev) => (prev === 1 ? -1 : 1));
@@ -504,7 +573,6 @@ export default function Gears() {
     directionSV.value = direction;
   }, [direction, directionSV]);
 
-  // ---------------- Timers (JS) ----------------
   const clearLongPressTimer = useCallback(() => {
     if (longPressTimerRef.current) {
       clearTimeout(longPressTimerRef.current);
@@ -544,7 +612,6 @@ export default function Gears() {
         "worklet";
         cancelAnimation(spinTurns);
 
-        // ✅ Capture unwind baseline at touch begin (matches old behavior)
         restTurns.value = spinTurns.value;
 
         isDragging.value = true;
@@ -552,6 +619,8 @@ export default function Gears() {
 
         dragStartTurns.value = spinTurns.value;
         cumulativeTurns.value = 0;
+
+        lastHapticTurns.value = spinTurns.value;
 
         const dx = e.absoluteX - centerX.value;
         const dy = e.absoluteY - centerY.value;
@@ -577,6 +646,9 @@ export default function Gears() {
           runOnJS(setModeNow)("dragging");
           runOnJS(safeStop)("unwinding");
           runOnJS(safeStartLoop)("winding");
+
+          runOnJS(triggerGearHaptic)();
+          lastHapticTurns.value = spinTurns.value;
         }
 
         runOnJS(scheduleIdleStop)();
@@ -592,6 +664,12 @@ export default function Gears() {
 
         const dirMul = directionSV.value === 1 ? 1 : -1;
         spinTurns.value = dragStartTurns.value + cumulativeTurns.value * dirMul;
+
+        const deltaTurns = Math.abs(spinTurns.value - lastHapticTurns.value);
+        if (deltaTurns >= HAPTIC_TURNS_STEP) {
+          lastHapticTurns.value = spinTurns.value;
+          runOnJS(triggerGearHaptic)();
+        }
       })
       .onEnd(() => {
         "worklet";
@@ -610,6 +688,10 @@ export default function Gears() {
         runOnJS(safeStop)("winding");
         runOnJS(safeStartLoop)("unwinding");
 
+        // ✅ continuous unwind haptics + release thump
+        runOnJS(startUnwindHaptics)();
+        runOnJS(triggerGearHaptic)();
+
         const from = spinTurns.value;
         const rest = restTurns.value;
         const turnsAway = Math.abs(from - rest);
@@ -627,7 +709,7 @@ export default function Gears() {
             easing: (t) => {
               "worklet";
               const inv = 1 - t;
-              return 1 - inv * inv * inv; // outCubic
+              return 1 - inv * inv * inv;
             },
           },
           (finished) => {
@@ -662,49 +744,16 @@ export default function Gears() {
     setModeNow,
     spinTurns,
     stopAllAudio,
+    triggerGearHaptic,
+    lastHapticTurns,
+    startUnwindHaptics,
   ]);
 
-  // Driver rotation style
   const driverRotate = useDerivedValue(() => `${spinTurns.value * 360}deg`);
   const driverStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: driverRotate.value }],
   }));
 
-  const reset = useCallback(() => {
-    stopAllAudio();
-
-    clearLongPressTimer();
-    clearIdleStopTimer();
-
-    cancelAnimation(spinTurns);
-    spinTurns.value = 0;
-    restTurns.value = 0;
-    directionSV.value = 1;
-
-    setDirection(1);
-    setModeNow("idle");
-    setPower(0);
-
-    if (stageSize.w > 0 && stageSize.h > 0) {
-      generateLayout(stageSize.w, stageSize.h);
-    }
-
-    measureDriverCenter();
-  }, [
-    clearIdleStopTimer,
-    clearLongPressTimer,
-    generateLayout,
-    measureDriverCenter,
-    setModeNow,
-    stageSize.h,
-    stageSize.w,
-    stopAllAudio,
-    spinTurns,
-    restTurns,
-    directionSV,
-  ]);
-
-  // ---------------- Stage measurement ----------------
   const [stageSizeState, setStageSizeState] = useState({ w: 0, h: 0 });
   useEffect(() => {
     setStageSize(stageSizeState);
@@ -714,7 +763,6 @@ export default function Gears() {
     <FullscreenWrapper>
       <View style={[styles.root, { backgroundColor: "#0B0B0F" }]}>
         <SafeAreaView style={{ flex: 1 }}>
-          {/* HEADER (standardized) */}
           <View style={styles.headerWrap}>
             <GameHeader
               left={<BackButton />}
@@ -724,12 +772,8 @@ export default function Gears() {
             />
           </View>
 
-          {/* STAGE */}
           <View style={styles.stageWrap}>
-            <PremiumStage
-              showShine={false}
-              style={{ backgroundColor: "#161824" }}
-            >
+            <PremiumStage showShine={false} style={{ backgroundColor: "#161824" }}>
               <View
                 style={styles.stageInner}
                 onLayout={(e) => {
@@ -770,9 +814,7 @@ export default function Gears() {
                       },
                     ]}
                   >
-                    <Animated.View
-                      style={[{ width: "100%", height: "100%" }, driverStyle]}
-                    >
+                    <Animated.View style={[{ width: "100%", height: "100%" }, driverStyle]}>
                       <Animated.Image
                         source={DRIVER_SOURCE}
                         resizeMode="contain"

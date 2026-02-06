@@ -9,11 +9,12 @@ import {
   Animated,
 } from "react-native";
 import { useRouter } from "expo-router";
-import * as Haptics from "expo-haptics";
 import { Audio } from "expo-av";
 import { LinearGradient } from "expo-linear-gradient";
 
-import FullscreenWrapper, { useSettingsUI } from "../components/FullscreenWrapper";
+import FullscreenWrapper, {
+  useSettingsUI,
+} from "../components/FullscreenWrapper";
 import {
   BRAND_ATTRIBUTION_LINES,
   WELCOME_TAGLINES,
@@ -50,7 +51,7 @@ function getFromState(i: number) {
 
 function WelcomeInner() {
   const router = useRouter();
-  const { soundOn } = useSettingsUI(); // ✅ keep sound toggle behavior, no settings icon here
+  const { soundOn, haptic } = useSettingsUI(); // ✅ canonical haptics + sound toggle
 
   const [index, setIndex] = useState(0);
 
@@ -169,7 +170,10 @@ function WelcomeInner() {
 
   const handlePress = useCallback(async () => {
     try {
-      await Haptics.selectionAsync();
+      // ✅ canonical haptic (respects Settings toggle)
+      haptic("selection");
+
+      // sound still respects toggle
       if (soundOn && soundRef.current) {
         await soundRef.current.replayAsync();
       }
@@ -178,7 +182,7 @@ function WelcomeInner() {
     }
 
     router.replace("/home");
-  }, [router, soundOn]);
+  }, [router, soundOn, haptic]);
 
   return (
     <Pressable style={styles.container} onPress={handlePress}>
